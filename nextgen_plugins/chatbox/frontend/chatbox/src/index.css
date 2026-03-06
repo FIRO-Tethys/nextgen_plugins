@@ -1,0 +1,15 @@
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  font-family: "Avenir Next", "Segoe UI", "Helvetica Neue", Arial, sans-serif;
+  color: #1f2930;
+  background:
+    radial-gradient(circle at 15% 20%, #dceef8 0, transparent 35%),
+    radial-gradient(circle at 82% 8%, #fff4d9 0, transparent 32%),
+    linear-gradient(180deg, #f8fcff 0%, #eef4f8 100%);
+  min-width: 320px;
+  min-height: 100vh;
+}

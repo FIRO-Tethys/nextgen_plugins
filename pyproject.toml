@@ -1,0 +1,43 @@
+[build-system]
+requires = ["setuptools>=42", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "nextgen_plugins"
+authors = [{ name = "Aquaveo LLC", email = "gromero@aquaveo.com" }]
+license = { file = "LICENSE" }
+readme = "README.md"
+classifiers = ["License :: OSI Approved :: MIT License"]
+version = "0.0.1"
+description = "Intake drivers for the NextGen DataStream Platform"
+requires-python = ">=3.6"
+dependencies = [
+    "geopandas", 
+    "xarray", 
+    "numpy<2",
+    "pandas", 
+    "pyarrow", 
+    "fsspec", 
+    "pyproj", 
+    "h5netcdf", 
+    "s3fs", 
+    "fastmcp", 
+    "ollama"
+]
+[project.urls]
+Homepage = "https://github.com/FIRO-Tethys/nextgen_plugins"
+Issues = "https://github.com/FIRO-Tethys/nextgen_plugins/issues"
+
+[project.entry-points."intake.drivers"]
+nrds_chat_service = "nextgen_plugins.chatbox.chat:NRDSChat"
+
+[tool.setuptools]
+include-package-data = true
+zip-safe = false
+
+[tool.setuptools.packages.find]
+include = ["*"]
+
+[tool.setuptools.package-data]
+"nextgen_plugins" = ["static/*.png", "static/*.jpg"]
+"nextgen_plugins.chatbox" = ["data/*.json"]
