@@ -4,7 +4,7 @@ import re
 from typing import Dict, Any, Optional
 from datetime import datetime, date
 from zoneinfo import ZoneInfo
-from nextgen_plugins.rest import (
+from nextgen_plugins.chatbox.rest import (
     list_available_models,
     list_available_dates,
     list_available_forecasts,

@@ -1,4 +1,5 @@
-from typing import Optional, Dict, Any, List
+import json
+from typing import Optional, Dict, Any, List, Literal
 from typing_extensions import Annotated
 from pydantic import Field
 from fastmcp import FastMCP
@@ -18,10 +19,7 @@ from .utils import (
 from .validations import (
     FORECASTS,
     VPUS,
-    MODELS,
-    MEDIUM_RANGE_CYCLES,
-    SHORT_RANGE_CYCLES,
-    ANALYSIS_ASSIM_EXTEND_CYCLES,
+    MODELS
 )
 
 mcp = FastMCP("NRDS MCP Server")
@@ -310,88 +308,6 @@ def resolve_output_file_tool(
 
     return _get_json_raw("get_output_file", params=params)
 
-# @mcp.tool(
-#     name="list_available_outputs_files_short_range",
-#     description="List available output files for short_range (hourly) forecast. cycle must be 00-23.",
-# )
-# def list_available_outputs_files_short_range_tool(
-#     model: Annotated[MODELS, Field(description="Model id")] = "cfe_nom",
-#     date: Annotated[
-#         Optional[str],
-#         Field(
-#             description="YYYY-MM-DD or YYYY/MM/DD",
-#             pattern=r"^(?:\d{4}-\d{2}-\d{2}|\d{4}/\d{2}/\d{2})$",
-#         ),
-#     ] = None,
-#     cycle: Annotated[SHORT_RANGE_CYCLES, Field(description="Hourly cycle for short_range (00-23)")] = "00",
-#     vpu: Annotated[VPUS, Field(description="VPU id")] = "VPU_6",
-# ) -> Dict[str, Any]:
-#     end_date = _parse_date_or_today(date, "date")
-#     params: Dict[str, Any] = {
-#         "model": model,
-#         "date": end_date,
-#         "forecast": "short_range",
-#         "cycle": cycle,
-#         "vpu": _as_id(vpu),
-#     }
-#     return _get_json_raw("list_available_outputs_files", params=params)
-
-
-# @mcp.tool(
-#     name="list_available_outputs_files_medium_range",
-#     description="List available output files for medium_range (6-hourly) forecast. cycle must be 00/06/12/18. Uses ensemble=1 (first member).",
-# )
-# def list_available_outputs_files_medium_range_tool(
-#     model: Annotated[MODELS, Field(description="Model id")] = "cfe_nom",
-#     date: Annotated[
-#         Optional[str],
-#         Field(
-#             description="YYYY-MM-DD or YYYY/MM/DD",
-#             pattern=r"^(?:\d{4}-\d{2}-\d{2}|\d{4}/\d{2}/\d{2})$",
-#         ),
-#     ] = None,
-#     cycle: Annotated[MEDIUM_RANGE_CYCLES, Field(description="6-hourly cycle for medium_range (00/06/12/18)")] = "00",
-#     vpu: Annotated[VPUS, Field(description="VPU id")] = "VPU_6",
-# ) -> Dict[str, Any]:
-#     end_date = _parse_date_or_today(date, "date")
-#     params: Dict[str, Any] = {
-#         "model": model,
-#         "date": end_date,
-#         "forecast": "medium_range",
-#         "cycle": cycle,
-#         "vpu": _as_id(vpu),
-#     }
-#     return _get_json_raw("list_available_outputs_files", params=params)
-
-
-# @mcp.tool(
-#     name="list_available_outputs_files_analysis_assim_extend",
-#     description="List available output files for analysis_assim_extend forecast. cycle is always 16.",
-# )
-# def list_available_outputs_files_analysis_assim_extend_tool(
-#     model: Annotated[MODELS, Field(description="Model id")] = "cfe_nom",
-#     date: Annotated[
-#         Optional[str],
-#         Field(
-#             description="YYYY-MM-DD or YYYY/MM/DD",
-#             pattern=r"^(?:\d{4}-\d{2}-\d{2}|\d{4}/\d{2}/\d{2})$",
-#         ),
-#     ] = None,
-#     cycle: Annotated[
-#         ANALYSIS_ASSIM_EXTEND_CYCLES, Field(description="Only valid cycle for analysis_assim_extend is 16")
-#     ] = "16",
-#     vpu: Annotated[VPUS, Field(description="VPU id")] = "VPU_6",
-# ) -> Dict[str, Any]:
-#     end_date = _parse_date_or_today(date, "date")
-#     params: Dict[str, Any] = {
-#         "model": model,
-#         "date": end_date,
-#         "forecast": "analysis_assim_extend",
-#         "cycle": cycle,
-#         "vpu": _as_id(vpu),
-#     }
-#     return _get_json_raw("list_available_outputs_files", params=params)
-
 @mcp.tool(
     name="read_parquet_output_file",
     description="Read a parquet output file from S3 given its s3_url. Returns columns and data (as list of lists).",
@@ -458,6 +374,170 @@ def query_netcdf_output_file_tool(
     ],
 ) -> Dict[str, Any]:
     return _get_json_raw("query_netcdf_output_file", params={"s3_url": s3_url, "query": query})
+
+
+def _parse_query_result_payload(query_result: Dict[str, Any] | str) -> Dict[str, Any]:
+    if isinstance(query_result, dict):
+        return query_result
+    if isinstance(query_result, str):
+        payload = json.loads(query_result)
+        if isinstance(payload, dict):
+            return payload
+    raise ValueError("query_result must be a JSON object or JSON object string.")
+
+
+def _is_numeric_value(v: Any) -> bool:
+    return isinstance(v, (int, float)) and not isinstance(v, bool)
+
+
+def _auto_pick_axes(columns: List[str], rows: List[Dict[str, Any]], x: Optional[str], y: Optional[str]) -> tuple[str, str]:
+    if not columns:
+        raise ValueError("No columns available to infer x/y axes.")
+
+    picked_x = x if x in columns else ("time" if "time" in columns else columns[0])
+    if y in columns and y != picked_x:
+        return picked_x, y
+
+    for col in columns:
+        if col == picked_x:
+            continue
+        if any(_is_numeric_value(r.get(col)) for r in rows):
+            return picked_x, col
+
+    raise ValueError(
+        "Could not infer a numeric y axis. Provide y=<numeric column name> explicitly."
+    )
+
+
+@mcp.tool(
+    name="create_plotly_chart_from_query_result",
+    description=(
+        "Create a Plotly-compatible chart JSON from the output of "
+        "query_parquet_output_file or query_netcdf_output_file. "
+        "Input can be a JSON object or a JSON string containing keys like columns/data."
+    ),
+)
+def create_plotly_chart_from_query_result_tool(
+    query_result: Annotated[
+        Dict[str, Any] | str,
+        Field(
+            description=(
+                "Result payload returned by query_parquet_output_file or "
+                "query_netcdf_output_file (dict or JSON string)."
+            )
+        ),
+    ],
+    chart_type: Annotated[
+        Literal["line", "scatter", "bar"],
+        Field(description="Chart type: line, scatter, or bar."),
+    ] = "line",
+    x: Annotated[
+        Optional[str],
+        Field(description="Column name for x-axis. Defaults to time, otherwise first column."),
+    ] = None,
+    y: Annotated[
+        Optional[str],
+        Field(description="Numeric column name for y-axis. Auto-detected if omitted."),
+    ] = None,
+    color: Annotated[
+        Optional[str],
+        Field(description="Optional categorical column for multi-trace grouping."),
+    ] = None,
+    title: Annotated[
+        Optional[str],
+        Field(description="Optional chart title."),
+    ] = None,
+    max_points: Annotated[
+        int,
+        Field(ge=1, le=50000, description="Maximum number of rows to plot."),
+    ] = 5000,
+) -> Dict[str, Any]:
+    payload = _parse_query_result_payload(query_result)
+
+    if payload.get("error"):
+        raise ValueError(f"Cannot chart errored query result: {payload.get('error')}")
+
+    rows = payload.get("data") or []
+    if not isinstance(rows, list):
+        raise ValueError("query_result.data must be a list.")
+    if not rows:
+        return {
+            "figure": {"data": [], "layout": {"title": title or "No data to plot"}},
+            "rows": 0,
+            "message": "Query returned no rows.",
+        }
+
+    first_row = rows[0]
+    if not isinstance(first_row, dict):
+        raise ValueError("query_result.data must be a list of objects.")
+
+    columns = payload.get("columns")
+    if not isinstance(columns, list) or not columns:
+        columns = list(first_row.keys())
+    columns = [str(c) for c in columns]
+
+    if color is not None and color not in columns:
+        raise ValueError(f"color column '{color}' not found in result columns: {columns}")
+
+    x_col, y_col = _auto_pick_axes(columns, rows, x, y)
+    limited_rows = rows[:max_points]
+
+    mode = "lines" if chart_type == "line" else "markers"
+    trace_type = "bar" if chart_type == "bar" else "scatter"
+
+    traces: List[Dict[str, Any]] = []
+    if color:
+        groups: Dict[str, List[Dict[str, Any]]] = {}
+        for row in limited_rows:
+            key = str(row.get(color, "null"))
+            groups.setdefault(key, []).append(row)
+
+        for group_name, group_rows in groups.items():
+            traces.append(
+                {
+                    "type": trace_type,
+                    "mode": mode if trace_type == "scatter" else None,
+                    "name": f"{y_col} ({group_name})",
+                    "x": [r.get(x_col) for r in group_rows],
+                    "y": [r.get(y_col) for r in group_rows],
+                }
+            )
+    else:
+        traces.append(
+            {
+                "type": trace_type,
+                "mode": mode if trace_type == "scatter" else None,
+                "name": y_col,
+                "x": [r.get(x_col) for r in limited_rows],
+                "y": [r.get(y_col) for r in limited_rows],
+            }
+        )
+
+    # Remove null mode for bar traces to keep clean plotly spec
+    for t in traces:
+        if t.get("type") == "bar":
+            t.pop("mode", None)
+
+    figure = {
+        "data": traces,
+        "layout": {
+            "title": title or f"{chart_type.title()} chart of {y_col} vs {x_col}",
+            "template": "plotly_white",
+            "xaxis": {"title": x_col},
+            "yaxis": {"title": y_col},
+        },
+    }
+
+    return {
+        "figure": figure,
+        "chart_type": chart_type,
+        "x": x_col,
+        "y": y_col,
+        "color": color,
+        "rows": len(rows),
+        "rows_plotted": len(limited_rows),
+        "rows_truncated": len(rows) > len(limited_rows),
+    }
 
 
 if __name__ == "__main__":

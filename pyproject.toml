@@ -30,7 +30,7 @@ Issues = "https://github.com/FIRO-Tethys/nextgen_plugins/issues"
 
 [project.entry-points."intake.drivers"]
 nrds_chat_service = "nextgen_plugins.chatbox.chat:NRDSChat"
-
+nrds_charts_service = "nextgen_plugins.chatbox.nrds:NRDSChart"
 [tool.setuptools]
 include-package-data = true
 zip-safe = false

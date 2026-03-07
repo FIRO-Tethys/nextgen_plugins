@@ -90,11 +90,10 @@ class NRDSChat(base.DataSource):
 
     async def _ws_send(self, request_id, *args):
         if request_id is None:
-            return
-        
+            return        
         await asyncio.to_thread(send_websocket_message, request_id, *args)
-        if args and isinstance(args[0], str):
-            self.usr_msg += "\n" + args[0]
+        # if args and isinstance(args[0], str):
+            # self.usr_msg += "\n" + args[0]
 
     def get_mcp_client(self) -> MCPClient:
         url = self.mcp_server_url.rstrip("/")
@@ -136,79 +135,6 @@ class NRDSChat(base.DataSource):
         except Exception as e:
             return {"error": str(e)}
 
-    # async def _chat_with_optional_thinking_stream(self, messages, tools, request_id=None):
-    #     if not self.stream_thinking:
-    #         return ollama.chat(
-    #             model=self.ollama_model,
-    #             messages=messages,
-    #             think=True,
-    #             tools=tools,
-    #             stream=False,
-    #             options={"temperature": 0},
-    #         )
-
-    #     response_stream = ollama.chat(
-    #         model=self.ollama_model,
-    #         messages=messages,
-    #         think=True,
-    #         tools=tools,
-    #         stream=True,
-    #         options={"temperature": 0},
-    #     )
-
-    #     merged = {}
-    #     merged_message = {
-    #         "role": "assistant",
-    #         "content": "",
-    #         "thinking": "",
-    #         "tool_calls": None,
-    #     }
-    #     printed_thinking_header = False
-
-    #     for chunk in response_stream:
-    #         chunk_dict = _as_dict(chunk)
-    #         msg = _as_dict(chunk_dict.get("message"))
-
-    #         thought = msg.get("thinking")
-    #         if isinstance(thought, str) and thought:
-    #             merged_message["thinking"] += thought
-    #             if self.show_thinking:
-    #                 if not printed_thinking_header:
-    #                     await self._ws_send(request_id, "\n🧠 Thinking:")
-    #                     printed_thinking_header = True
-    #                 await self._ws_send(request_id, thought)
-
-    #         content = msg.get("content")
-    #         if isinstance(content, str) and content:
-    #             merged_message["content"] += content
-
-    #         tool_calls = msg.get("tool_calls")
-    #         if tool_calls:
-    #             merged_message["tool_calls"] = tool_calls
-
-    #         for key in (
-    #             "model",
-    #             "created_at",
-    #             "done",
-    #             "done_reason",
-    #             "total_duration",
-    #             "load_duration",
-    #             "prompt_eval_count",
-    #             "prompt_eval_duration",
-    #             "eval_count",
-    #             "eval_duration",
-    #         ):
-    #             if key in chunk_dict:
-    #                 merged[key] = chunk_dict[key]
-
-    #     if printed_thinking_header and self.show_thinking:
-    #         await self._ws_send(request_id, "")
-
-    #     if merged_message["tool_calls"] is None:
-    #         merged_message.pop("tool_calls")
-
-    #     merged["message"] = merged_message
-    #     return merged
     async def _chat_with_optional_thinking_stream(self, messages, tools, request_id=None):
         if not self.stream_thinking:
             return ollama.chat(

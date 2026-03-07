@@ -18,7 +18,6 @@ BUCKET = os.getenv("BUCKET","ciroh-community-ngen-datastream")
 OUTPUTS_DIR = "outputs"
 PREFIX_HYDROFABRIC = "v2.2_hydrofabric"
 NGEN_RUN_PREFIX = "ngen-run/outputs/troute"
-
  
 def _ensure_full_s3_url(path: str) -> str:
     p = str(path or "").strip()
@@ -59,7 +58,6 @@ def list_available_outputs_files(data) -> Dict:
     except FileNotFoundError:
         # valid request, just no outputs at that path
         return {"path": s3_url, "files": []}
-
 
 def get_output_file(model, date, forecast, cycle, vpu, file_name=None, index=None, ensemble=None) -> Dict:
     # build directory like your other endpoints
@@ -104,7 +102,6 @@ def get_output_file(model, date, forecast, cycle, vpu, file_name=None, index=Non
     except FileNotFoundError:
         return {"dir": s3_dir, "count": 0, "selected": None}
 
-
 def list_available_vpus(model, date, forecast, cycle) -> Dict:
     """List VPUs for a given model, date, forecast, and cycle."""
     date = _normalize_date_folder(date)
@@ -127,7 +124,6 @@ def list_available_vpus(model, date, forecast, cycle) -> Dict:
                 "path": s3_url,
                 "vpus": [],
             }
-
 
 def list_available_cycles(model, date, forecast) -> Dict:
     """List available cycles for a given model, date, and forecast"""
@@ -176,7 +172,6 @@ def list_available_forecasts(model, date) -> Dict:
                 "forecasts": [],
             }
 
-
 def list_available_dates(model) -> Dict:
     """List available dates for a given model"""
     s3_url = f"s3://{BUCKET}/{OUTPUTS_DIR}/{model}/{PREFIX_HYDROFABRIC}"
@@ -203,7 +198,6 @@ def list_available_dates(model) -> Dict:
                 "path": s3_url,
                 "dates": [],
             }
-
 
 def list_available_models() -> Dict:
     s3_url = f"s3://{BUCKET}/{OUTPUTS_DIR}"
@@ -247,7 +241,6 @@ def query_netcdf_output_file(s3_url, query) -> Dict:
         return {"file": file_url, "query": query, "columns": [], "rows": 0, "data": []}
     except Exception as e:
         return {"file": file_url, "query": query, "error": str(e)}
-
 
 def query_parquet_output_file(s3_url, query) -> Dict:
     """Run any DuckDB SQL query against a Parquet file on S3 (view name: `output`)."""
