@@ -79,21 +79,23 @@ class NRDSChat(base.DataSource):
         self.ollama_model = OLLAMA_MODEL
         self.mcp_client = self.get_mcp_client()
         self.usr_msg = usr_msg
+        self.thinking_msg = ""
         super(NRDSChat, self).__init__(metadata=metadata)
 
     def read(self, request_id=None):
         self.metadata = {"bucket": self.bucket}
-        self.main(request_id)
+        final_text = self.main(request_id)
         return {
-            "text": self.usr_msg,
+            "text": final_text,
         }
 
     async def _ws_send(self, request_id, *args):
         if request_id is None:
-            return        
-        await asyncio.to_thread(send_websocket_message, request_id, *args)
-        # if args and isinstance(args[0], str):
-            # self.usr_msg += "\n" + args[0]
+            return
+        if args and isinstance(args[0], str):
+            self.thinking_msg += args[0]  
+        await asyncio.to_thread(send_websocket_message, request_id, self.thinking_msg)
+
 
     def get_mcp_client(self) -> MCPClient:
         url = self.mcp_server_url.rstrip("/")
@@ -232,6 +234,7 @@ class NRDSChat(base.DataSource):
 
         merged["message"] = merged_message
         return merged
+
     async def process_tool_calls(self, tool_calls, messages):
         had_error = False
         last_err = None
@@ -343,8 +346,9 @@ class NRDSChat(base.DataSource):
             if not tool_calls:
                 assistant_text = msg.get("content", "")
                 messages.append({"role": "assistant", "content": assistant_text})
-                await self._ws_send(request_id, assistant_text)
-                break
+                # await self._ws_send(request_id, assistant_text)
+                return assistant_text
+                
 
             if "tool_calls" not in msg:
                 msg["tool_calls"] = tool_calls
@@ -423,7 +427,7 @@ class NRDSChat(base.DataSource):
 
     def main(self, request_id=None):
         try:
-            asyncio.run(self.start_chat(request_id))
+            return asyncio.run(self.start_chat(request_id))
         except Exception as e:
             logger.error(e)
             return None
