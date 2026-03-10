@@ -30,10 +30,20 @@ function normalizeFigure(input) {
     return null;
   }
 
-  const data = Array.isArray(figure.data) ? figure.data : [];
-  if (!data.length) {
+  const rawData = Array.isArray(figure.data) ? figure.data : [];
+  if (!rawData.length) {
     return null;
   }
+
+  const data = rawData.map((trace) => {
+    const normalizedTrace =
+      trace && typeof trace === "object" && !Array.isArray(trace) ? trace : {};
+    return {
+      ...normalizedTrace,
+      type: "scatter",
+      mode: "lines",
+    };
+  });
 
   const layout =
     figure.layout && typeof figure.layout === "object" ? figure.layout : {};

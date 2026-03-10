@@ -395,8 +395,41 @@ function lastQueryToolPayload(messages) {
 }
 
 export function normalizePlotlyChartToolArgs(args, messages, fallbackQueryResult = null) {
+  const SUPPORTED_Y_COLUMNS = ["flow", "velocity"];
+
+  const pickYColumn = (requestedY, queryResult) => {
+    const requested = typeof requestedY === "string" ? requestedY.trim().toLowerCase() : "";
+    if (SUPPORTED_Y_COLUMNS.includes(requested)) {
+      return requested;
+    }
+
+    if (queryResult && typeof queryResult === "object" && !Array.isArray(queryResult)) {
+      const columns = Array.isArray(queryResult.columns)
+        ? queryResult.columns.map((col) => String(col).toLowerCase())
+        : [];
+      for (const candidate of SUPPORTED_Y_COLUMNS) {
+        if (columns.includes(candidate)) {
+          return candidate;
+        }
+      }
+
+      const rows = Array.isArray(queryResult.data) ? queryResult.data : [];
+      const firstObjectRow = rows.find(
+        (row) => row && typeof row === "object" && !Array.isArray(row),
+      );
+      if (firstObjectRow) {
+        for (const candidate of SUPPORTED_Y_COLUMNS) {
+          if (Object.prototype.hasOwnProperty.call(firstObjectRow, candidate)) {
+            return candidate;
+          }
+        }
+      }
+    }
+
+    return "flow";
+  };
+
   let normalizedArgs = args;
-  console.log("Normalizing Plotly chart tool args:", args);
   if (typeof normalizedArgs === "string") {
     const parsed = coerceJsonObject(normalizedArgs);
     normalizedArgs = parsed ?? { query_result: normalizedArgs };
@@ -404,22 +437,19 @@ export function normalizePlotlyChartToolArgs(args, messages, fallbackQueryResult
     normalizedArgs = {};
   }
 
-  const cleaned = {};
-  for (const key of ["chart_type", "x", "y", "color", "title", "max_points"]) {
-    const value = normalizedArgs[key];
-    if (value === null || value === undefined || value === "") {
-      continue;
-    }
-    cleaned[key] = value;
-  }
+  const cleaned = {
+    chart_type: "line",
+    x: "time",
+  };
 
-  if (typeof cleaned.max_points === "string") {
-    const parsedMax = Number.parseInt(cleaned.max_points.trim(), 10);
+  const rawMaxPoints = normalizedArgs.max_points;
+  if (typeof rawMaxPoints === "string") {
+    const parsedMax = Number.parseInt(rawMaxPoints.trim(), 10);
     if (Number.isFinite(parsedMax)) {
       cleaned.max_points = parsedMax;
-    } else {
-      delete cleaned.max_points;
     }
+  } else if (Number.isFinite(Number(rawMaxPoints))) {
+    cleaned.max_points = Number(rawMaxPoints);
   }
 
   let queryResultCandidate = normalizedArgs.query_result;
@@ -445,6 +475,8 @@ export function normalizePlotlyChartToolArgs(args, messages, fallbackQueryResult
   } else if (queryResultCandidate !== null && queryResultCandidate !== undefined) {
     cleaned.query_result = queryResultCandidate;
   }
+
+  cleaned.y = pickYColumn(normalizedArgs.y, cleaned.query_result);
 
   return cleaned;
 }

@@ -27,212 +27,6 @@ const DEFAULT_OLLAMA_HOST = (import.meta.env.VITE_OLLAMA_HOST ?? "http://localho
 const DEFAULT_MCP_SERVER_URL = (import.meta.env.VITE_MCP_SERVER_URL ?? "/sse").trim();
 const MAX_TOOL_REPAIR_ATTEMPTS = Number.parseInt(import.meta.env.VITE_MCP_TOOL_REPAIR_ATTEMPTS ?? "0", 10);
 
-const BUILTIN_TOOLS = [
-  {
-    type: "function",
-    function: {
-      name: "list_available_models",
-      description: "List available NRDS models.",
-      parameters: { type: "object", properties: {}, additionalProperties: false },
-    },
-  },
-  {
-    type: "function",
-    function: {
-      name: "list_available_dates",
-      description: "List available dates for a model.",
-      parameters: {
-        type: "object",
-        properties: {
-          model: { type: "string", description: "Model id." },
-          offset: { type: "integer", minimum: 0 },
-          limit: { type: "integer", minimum: 0 },
-          start: { type: "string", description: "YYYY-MM-DD or YYYY/MM/DD" },
-          end: { type: "string", description: "YYYY-MM-DD or YYYY/MM/DD" },
-        },
-        additionalProperties: false,
-      },
-    },
-  },
-  {
-    type: "function",
-    function: {
-      name: "list_available_forecasts",
-      description: "List available forecasts for a model and date.",
-      parameters: {
-        type: "object",
-        properties: {
-          model: { type: "string" },
-          date: { type: "string", description: "YYYY-MM-DD or YYYY/MM/DD" },
-        },
-        additionalProperties: false,
-      },
-    },
-  },
-  {
-    type: "function",
-    function: {
-      name: "list_available_cycles",
-      description: "List available cycles for model/date/forecast.",
-      parameters: {
-        type: "object",
-        properties: {
-          model: { type: "string" },
-          date: { type: "string", description: "YYYY-MM-DD or YYYY/MM/DD" },
-          forecast: { type: "string" },
-        },
-        additionalProperties: false,
-      },
-    },
-  },
-  {
-    type: "function",
-    function: {
-      name: "list_available_vpus",
-      description: "List available VPUs for model/date/forecast/cycle.",
-      parameters: {
-        type: "object",
-        properties: {
-          model: { type: "string" },
-          date: { type: "string", description: "YYYY-MM-DD or YYYY/MM/DD" },
-          forecast: { type: "string" },
-          cycle: { type: "string" },
-        },
-        additionalProperties: false,
-      },
-    },
-  },
-  {
-    type: "function",
-    function: {
-      name: "list_available_outputs_files",
-      description: "List available output files for model/date/forecast/cycle/vpu.",
-      parameters: {
-        type: "object",
-        properties: {
-          model: { type: "string" },
-          date: { type: "string", description: "YYYY-MM-DD or YYYY/MM/DD" },
-          forecast: { type: "string" },
-          cycle: { type: "string" },
-          vpu: { type: "string" },
-          ensemble: { type: "integer" },
-        },
-        required: ["model", "date", "forecast", "cycle", "vpu"],
-        additionalProperties: false,
-      },
-    },
-  },
-  {
-    type: "function",
-    function: {
-      name: "resolve_output_file",
-      description: "Resolve a single output file by file_name or index.",
-      parameters: {
-        type: "object",
-        properties: {
-          model: { type: "string" },
-          date: { type: "string", description: "YYYY-MM-DD or YYYY/MM/DD" },
-          forecast: { type: "string" },
-          cycle: { type: "string" },
-          vpu: { type: "string" },
-          ensemble: { type: "string" },
-          file_name: { type: "string" },
-          index: { type: "integer", minimum: 0 },
-        },
-        required: ["model", "date", "forecast", "cycle", "vpu"],
-        additionalProperties: false,
-      },
-    },
-  },
-  {
-    type: "function",
-    function: {
-      name: "query_parquet_output_file",
-      description: "Run DuckDB SQL against one parquet output file URL.",
-      parameters: {
-        type: "object",
-        properties: {
-          s3_url: { type: "string", description: "Full parquet URL." },
-          query: { type: "string", description: "DuckDB SQL that reads FROM output." },
-        },
-        required: ["s3_url", "query"],
-        additionalProperties: false,
-      },
-    },
-  },
-  {
-    type: "function",
-    function: {
-      name: "query_netcdf_output_file",
-      description: "Run DuckDB SQL against one netcdf output file URL.",
-      parameters: {
-        type: "object",
-        properties: {
-          s3_url: { type: "string", description: "Full netcdf URL." },
-          query: { type: "string", description: "DuckDB SQL that reads FROM output." },
-        },
-        required: ["s3_url", "query"],
-        additionalProperties: false,
-      },
-    },
-  },
-  {
-    type: "function",
-    function: {
-      name: "create_plotly_chart_from_query_result",
-      description: "Create a Plotly-compatible chart JSON from a query_* result payload.",
-      parameters: {
-        type: "object",
-        properties: {
-          query_result: {
-            type: "object",
-            description: "Full payload from query_parquet_output_file or query_netcdf_output_file.",
-          },
-          chart_type: {
-            type: "string",
-            enum: ["line", "scatter", "bar"],
-            description: "Chart type.",
-          },
-          x: { type: "string", description: "Column for x-axis." },
-          y: { type: "string", description: "Column for y-axis." },
-          color: { type: "string", description: "Optional grouping column." },
-          title: { type: "string", description: "Optional title." },
-          max_points: { type: "integer", minimum: 1, maximum: 50000 },
-        },
-        required: ["query_result"],
-        additionalProperties: false,
-      },
-    },
-  },
-];
-
-function ensurePlotlyChartTool(tools) {
-  const builtinPlotly = BUILTIN_TOOLS.find(
-    (tool) => tool?.function?.name === "create_plotly_chart_from_query_result",
-  );
-
-  if (!builtinPlotly) {
-    return Array.isArray(tools) && tools.length ? tools : BUILTIN_TOOLS;
-  }
-
-  if (!Array.isArray(tools) || !tools.length) {
-    return BUILTIN_TOOLS;
-  }
-
-  const normalized = [...tools];
-  const index = normalized.findIndex(
-    (tool) => tool?.function?.name === "create_plotly_chart_from_query_result",
-  );
-
-  if (index >= 0) {
-    // Replace the MCP-provided schema with the simpler built-in schema.
-    normalized[index] = builtinPlotly;
-    return normalized;
-  }
-
-  return [...normalized, builtinPlotly];
-}
-
 function omitEmptyArgs(args) {
   const cleaned = {};
   for (const [key, value] of Object.entries(args ?? {})) {
@@ -360,37 +154,14 @@ async function loadTools(mcpClient) {
           },
         };
       });
-      const finalTools = ensurePlotlyChartTool(mappedTools);
-      const plotlyTool = finalTools.find(
-        (tool) => tool?.function?.name === "create_plotly_chart_from_query_result",
-      );
-      console.debug("Plotly tool sent to Ollama:", plotlyTool);
-      return finalTools;
-
+      console.log("Loaded tools from MCP server:", mappedTools);  
+      return mappedTools
     }
   } catch (error) {
     console.error("Error loading tools from MCP server:", error);
   }
 
-  const toolsUrl = (import.meta.env.VITE_CHATBOX_TOOLS_URL ?? "").trim();
-  if (!toolsUrl) {
-    return ensurePlotlyChartTool(BUILTIN_TOOLS);
-  }
 
-  try {
-    const response = await fetch(toolsUrl, { method: "GET" });
-    if (!response.ok) {
-      return ensurePlotlyChartTool(BUILTIN_TOOLS);
-    }
-    const payload = await response.json();
-    if (Array.isArray(payload)) {
-      return ensurePlotlyChartTool(payload);
-    }
-  } catch {
-    return ensurePlotlyChartTool(BUILTIN_TOOLS);
-  }
-
-  return ensurePlotlyChartTool(BUILTIN_TOOLS);
 }
 
 async function executeTool(toolName, args, mcpClient) {
@@ -573,8 +344,7 @@ async function processToolCalls(toolCalls, messages, mcpClient) {
     ) {
       lastQueryResultPayload = toolResult;
     }
-    // const compactResult = compactToolResultForContext(toolResult);
-    const compactResult = toolResult;
+    const compactResult = compactToolResultForContext(toolResult);
     messages.push({
       role: "tool",
       tool_name: toolName,
@@ -640,13 +410,9 @@ export async function runChatSession({
 
       const message = getMessage(response);
       let toolCalls = Array.isArray(message.tool_calls) ? message.tool_calls : [];
-      console.log("Assistant message content:", message.content);
-      console.log("Assistant message thinking:", message.thinking);
-      console.log("Assistant message tool_calls:", message.tool_calls);
       if (!toolCalls.length) {
         const assistantContent = typeof message.content === "string" ? message.content : "";
         toolCalls = extractInlineToolCalls(assistantContent);
-        console.log("Inline extracted toolCalls:", toolCalls);
       }
 
       if (!toolCalls.length) {
