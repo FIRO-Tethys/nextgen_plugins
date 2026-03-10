@@ -1,4 +1,4 @@
-import { Ollama } from "ollama/browser";
+// import { Ollama } from "ollama/browser";
 import { AUTO_FIX_SYSTEM_MSG, FILE_MSG } from "./chatboxMessages";
 
 const URL_RE = /(https?:\/\/\S+|s3:\/\/\S+)/i;
@@ -76,35 +76,6 @@ function parseFirstJsonObject(text, startIndex) {
     }
   }
 
-  return null;
-}
-
-function stripMarkdownCodeFence(text) {
-  const raw = String(text ?? "").trim();
-  if (!raw.startsWith("```")) {
-    return raw;
-  }
-
-  const lines = raw.split("\n");
-  if (lines.length && lines[0].trimStart().startsWith("```")) {
-    lines.shift();
-  }
-  if (lines.length && lines[lines.length - 1].trim() === "```") {
-    lines.pop();
-  }
-  return lines.join("\n").trim();
-}
-
-function extractFirstJsonObject(text) {
-  for (let i = 0; i < text.length; i += 1) {
-    if (text[i] !== "{") {
-      continue;
-    }
-    const parsed = parseFirstJsonObject(text, i);
-    if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
-      return parsed;
-    }
-  }
   return null;
 }
 
@@ -346,7 +317,6 @@ export function normalizeQueryToolArgs(toolName, args) {
   return args;
 }
 
-
 export function generateAutoFixToolMsg(lastErr, priorUserText = "", repeatedSignature = null) {
   const errLower = (lastErr ?? "").toLowerCase();
   const chainHints = [];
@@ -405,32 +375,6 @@ export function getMessage(resp) {
   }
   return message;
 }
-
-function extractPlotlyFigure(payload) {
-  if (!payload || typeof payload !== "object" || Array.isArray(payload)) {
-    return null;
-  }
-
-  let figure = payload.figure;
-  if (typeof figure === "string") {
-    try {
-      figure = JSON.parse(figure);
-    } catch {
-      figure = null;
-    }
-  }
-
-  if (figure && typeof figure === "object" && !Array.isArray(figure) && Array.isArray(figure.data)) {
-    return figure;
-  }
-
-  if (Array.isArray(payload.data) && payload.layout && typeof payload.layout === "object") {
-    return payload;
-  }
-
-  return null;
-}
-
 
 
 export function toolCallSignature(toolName, args) {
@@ -507,33 +451,33 @@ export function compactToolResultForContext(toolResult, maxItems = 50) {
   return toolResult;
 }
 
-export async function getContextLengthFromPs(modelName, ollamaHost, ollamaClient = null) {
-  try {
-    const client = ollamaClient ?? new Ollama({ host: ollamaHost });
-    const payload = await client.ps();
-    const models = Array.isArray(payload.models) ? payload.models : [];
-    const direct = models.find(
-      (model) => model?.name === modelName || model?.model === modelName,
-    );
-    if (direct && Number.isFinite(Number(direct.context_length))) {
-      return Number(direct.context_length);
-    }
+// export async function getContextLengthFromPs(modelName, ollamaHost, ollamaClient = null) {
+//   try {
+//     const client = ollamaClient ?? new Ollama({ host: ollamaHost });
+//     const payload = await client.ps();
+//     const models = Array.isArray(payload.models) ? payload.models : [];
+//     const direct = models.find(
+//       (model) => model?.name === modelName || model?.model === modelName,
+//     );
+//     if (direct && Number.isFinite(Number(direct.context_length))) {
+//       return Number(direct.context_length);
+//     }
 
-    const base = String(modelName ?? "").split(":", 1)[0];
-    const fallback = models.find((model) => {
-      const nameBase = String(model?.name ?? "").split(":", 1)[0];
-      const modelBase = String(model?.model ?? "").split(":", 1)[0];
-      return nameBase === base || modelBase === base;
-    });
+//     const base = String(modelName ?? "").split(":", 1)[0];
+//     const fallback = models.find((model) => {
+//       const nameBase = String(model?.name ?? "").split(":", 1)[0];
+//       const modelBase = String(model?.model ?? "").split(":", 1)[0];
+//       return nameBase === base || modelBase === base;
+//     });
 
-    if (fallback && Number.isFinite(Number(fallback.context_length))) {
-      return Number(fallback.context_length);
-    }
-  } catch {
-    return null;
-  }
-  return null;
-}
+//     if (fallback && Number.isFinite(Number(fallback.context_length))) {
+//       return Number(fallback.context_length);
+//     }
+//   } catch {
+//     return null;
+//   }
+//   return null;
+// }
 
 // export async function printContextUsage(response, modelName, ollamaHost, ollamaClient = null) {
 //   const promptTokens = Number.isFinite(Number(response?.prompt_eval_count))
