@@ -342,8 +342,7 @@ export function normalizeQueryToolArgs(toolName, args) {
   }
 
   const queryTools = new Set(["query_parquet_output_file", "query_netcdf_output_file"]);
-  const readTools = new Set(["read_parquet_output_file", "read_netcdf_output_file"]);
-
+ 
   if (queryTools.has(toolName)) {
     const normalized = { ...args };
     const s3Url = normalized.s3_url;
@@ -364,14 +363,6 @@ export function normalizeQueryToolArgs(toolName, args) {
       if (Object.prototype.hasOwnProperty.call(normalized, key)) {
         result[key] = normalized[key];
       }
-    }
-    return result;
-  }
-
-  if (readTools.has(toolName)) {
-    const result = {};
-    if (Object.prototype.hasOwnProperty.call(args, "s3_url")) {
-      result.s3_url = args.s3_url;
     }
     return result;
   }

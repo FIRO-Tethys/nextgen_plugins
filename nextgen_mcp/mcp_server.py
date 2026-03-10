@@ -328,20 +328,20 @@ def resolve_output_file_tool(
 
     return _get_json_raw("get_output_file", params=params)
 
-@mcp.tool(
-    name="read_parquet_output_file",
-    description="Read a parquet output file from S3 given its s3_url. Returns columns and data (as list of lists).",
-)
-def read_parquet_output_file_tool(
-    s3_url: Annotated[
-        str,
-        Field(
-            description="Full URL to the parquet file (s3://... or https://...)", 
-            pattern=r"^(?:https://|s3://).+\.parquet$",
-        ),
-    ],
-) -> Dict[str, Any]:
-    return _get_json_raw("read_parquet_output_file", params={"s3_url": s3_url})
+# @mcp.tool(
+#     name="read_parquet_output_file",
+#     description="Read a parquet output file from S3 given its s3_url. Returns columns and data (as list of lists).",
+# )
+# def read_parquet_output_file_tool(
+#     s3_url: Annotated[
+#         str,
+#         Field(
+#             description="Full URL to the parquet file (s3://... or https://...)", 
+#             pattern=r"^(?:https://|s3://).+\.parquet$",
+#         ),
+#     ],
+# ) -> Dict[str, Any]:
+#     return _get_json_raw("read_parquet_output_file", params={"s3_url": s3_url})
 
 @mcp.tool(
     name="query_parquet_output_file",

@@ -306,7 +306,6 @@ def _normalize_query_tool_args(tool_name: str, args: Any) -> Any:
 
     # Tools we want to strictly sanitize
     query_tools = {"query_parquet_output_file", "query_netcdf_output_file"}
-    read_tools = {"read_parquet_output_file", "read_netcdf_output_file"}
 
     # ---- query tools: keep ONLY (s3_url, query), and try to repair folder+filename ----
     if tool_name in query_tools:
@@ -318,11 +317,6 @@ def _normalize_query_tool_args(tool_name: str, args: Any) -> Any:
 
         # Drop everything except schema keys
         args = {k: args[k] for k in ("s3_url", "query") if k in args}
-        return args
-
-    # ---- read tools: keep ONLY (s3_url) ----
-    if tool_name in read_tools:
-        args = {k: args[k] for k in ("s3_url",) if k in args}
         return args
 
     return args

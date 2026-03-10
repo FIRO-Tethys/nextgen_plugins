@@ -66,52 +66,6 @@ function normalizeMcpSseUrl(serverUrl) {
   return normalized;
 }
 
-function extractTextContent(content) {
-  if (!Array.isArray(content)) {
-    return "";
-  }
-
-  return content
-    .filter((part) => part && part.type === "text" && typeof part.text === "string")
-    .map((part) => part.text)
-    .join("\n")
-    .trim();
-}
-
-function normalizeMcpToolResult(result) {
-  if (!result || typeof result !== "object") {
-    return result;
-  }
-
-  if (result.isError) {
-    const text = extractTextContent(result.content);
-    return { error: text || "Tool call failed." };
-  }
-
-  if (
-    Object.prototype.hasOwnProperty.call(result, "structuredContent") &&
-    result.structuredContent !== null &&
-    result.structuredContent !== undefined
-  ) {
-    return result.structuredContent;
-  }
-
-  if (Object.prototype.hasOwnProperty.call(result, "toolResult")) {
-    return result.toolResult;
-  }
-
-  const text = extractTextContent(result.content);
-  if (!text) {
-    return result;
-  }
-
-  try {
-    return JSON.parse(text);
-  } catch {
-    return text;
-  }
-}
-
 async function createMcpConnection(mcpServerUrl) {
   const sseUrl = normalizeMcpSseUrl(mcpServerUrl);
   const client = new MCPClient({
@@ -169,8 +123,19 @@ async function executeTool(toolName, args, mcpClient) {
     const result = await mcpClient.callTool({
       name: toolName,
       arguments: omitEmptyArgs(args),
+      raiseOnError: false, // if supported by your JS MCP client
     });
-    return normalizeMcpToolResult(result);
+
+    const data = result?.data;
+    if (data !== undefined && data !== null) {
+      return data;
+    }
+
+    try {
+      return result?.content?.[0]?.text ?? result;
+    } catch {
+      return result;
+    }
   } catch (error) {
     return { error: String(error?.message ?? error) };
   }

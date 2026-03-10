@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { runChatSession } from "./chatboxEngine";
 import PlotlyChart from "./PlotlyChart";
+import MarkdownContent from "./markdownContent";
 
 function ChatBox({ thinkingEnabled = true, model = "qwen3", prompt = "" }) {
   const [messages, setMessages] = useState([]);
@@ -37,7 +38,7 @@ function ChatBox({ thinkingEnabled = true, model = "qwen3", prompt = "" }) {
           setThinking((prev) => prev + chunk);
         },
       });
-
+      console.log("Chat session completed with result:", result);
       setMessages((prev) => [
         ...prev,
         {
@@ -69,7 +70,8 @@ function ChatBox({ thinkingEnabled = true, model = "qwen3", prompt = "" }) {
             className={`chat-bubble ${message.role === "user" ? "chat-user" : "chat-assistant"}`}
           >
             <strong>{message.role === "user" ? "You" : "Assistant"}</strong>
-            {message.content ? <p>{message.content}</p> : null}
+            {message.content ? <MarkdownContent content={message.content} /> : null}
+
             {message.figure ? <PlotlyChart figure={message.figure} /> : null}
           </article>
         ))}
