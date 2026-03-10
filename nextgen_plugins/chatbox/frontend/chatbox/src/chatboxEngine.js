@@ -11,12 +11,12 @@ import {
   generateFileMsg,
   getMessage,
   isPlausibleOutputsFile,
-  lastToolPlotlyFigure,
+  // lastToolPlotlyFigure,
   lastToolFileUrl,
   maybeJoinDirAndFilename,
-  normalizePlotlyChartToolArgs,
+  // normalizePlotlyChartToolArgs,
   normalizeQueryToolArgs,
-  printContextUsage,
+  // printContextUsage,
   rewriteFromToOutput,
   toolCallSignature,
   toolErrorText,
@@ -255,9 +255,9 @@ async function processToolCalls(toolCalls, messages, mcpClient) {
     }
 
     args = normalizeQueryToolArgs(toolName, args);
-    if (toolName === "create_plotly_chart_from_query_result") {
-      args = normalizePlotlyChartToolArgs(args, messages, lastQueryResultPayload);
-    }
+    // if (toolName === "create_plotly_chart_from_query_result") {
+    //   args = normalizePlotlyChartToolArgs(args, messages, lastQueryResultPayload);
+    // }
 
     const s3Url = typeof args?.s3_url === "string" ? args.s3_url : null;
     if (s3Url && s3Url.toLowerCase().endsWith(".parquet") && toolName === "query_netcdf_output_file") {
@@ -342,9 +342,6 @@ export async function runChatSession({
   const messages = [buildSystemMessage()];
 
   const text = typeof prompt === "string" ? prompt : "";
-  if (!text || [":q", ":quit", "quit", "exit"].includes(text.trim().toLowerCase())) {
-    return { assistantText: "", messages, plotlyFigure: null };
-  }
 
   const mcpConnection = await createMcpConnection(mcpServerUrl);
   const mcpClient = mcpConnection.client;
@@ -371,7 +368,7 @@ export async function runChatSession({
         ollamaClient,
       });
 
-      await printContextUsage(response, model, ollamaHost, ollamaClient);
+      // await printContextUsage(response, model, ollamaHost, ollamaClient);
 
       const message = getMessage(response);
       let toolCalls = Array.isArray(message.tool_calls) ? message.tool_calls : [];
@@ -383,7 +380,8 @@ export async function runChatSession({
       if (!toolCalls.length) {
         const assistantText = typeof message.content === "string" ? message.content : "";
         messages.push({ role: "assistant", content: assistantText });
-        return { assistantText, messages, plotlyFigure: lastToolPlotlyFigure(messages) };
+        return { assistantText, messages };
+        // return { assistantText, messages, plotlyFigure: lastToolPlotlyFigure(messages) };
       }
 
       if (!Object.prototype.hasOwnProperty.call(message, "tool_calls")) {
