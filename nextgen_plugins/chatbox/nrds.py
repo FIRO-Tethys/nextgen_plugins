@@ -13,6 +13,7 @@ from .client_utils import (
     file_kind,
     extract_inline_tool_calls,
     _normalize_query_tool_args,
+    _normalize_plotly_chart_tool_args,
     generate_auto_fix_tool_msg,
     generate_file_msg,
     _rewrite_from_to_output,
@@ -26,7 +27,7 @@ from .client_utils import (
     _bump_failed_signature_counts
 )
 from .context import _print_context_usage, _compact_tool_result_for_context
-from .messages import SYSTEM_MSG
+from .messages_chart import SYSTEM_MSG
 
 from .logger import LOGGER
 from tethysapp.tethysdash.exceptions import VisualizationError
@@ -79,19 +80,28 @@ class NRDSChart(base.DataSource):
         self.ollama_model = OLLAMA_MODEL
         self.mcp_client = self.get_mcp_client()
         self.usr_msg = usr_msg
+        self.thinking_msg = ""
+
         super(NRDSChart, self).__init__(metadata=metadata)
 
     def read(self, request_id=None):
         self.metadata = {"bucket": self.bucket}
+        LOGGER.info("NRDSChart.read started (request_id=%s)", request_id)
         fig = self.main(request_id)
-        return fig
+        plot = self._to_tethysdash_plot(fig)
+        LOGGER.info(
+            "NRDSChart.read returning plot with %s trace(s)",
+            len(plot.get("data", [])) if isinstance(plot, dict) else 0,
+        )
+        return plot
+
 
     async def _ws_send(self, request_id, *args):
         if request_id is None:
-            return        
-        await asyncio.to_thread(send_websocket_message, request_id, *args)
+            return
         if args and isinstance(args[0], str):
-            self.usr_msg += "\n" + args[0]
+            self.thinking_msg += args[0]  
+        await asyncio.to_thread(send_websocket_message, request_id, self.thinking_msg)
 
     def get_mcp_client(self) -> MCPClient:
         url = self.mcp_server_url.rstrip("/")
@@ -265,15 +275,65 @@ class NRDSChart(base.DataSource):
 
         return None
 
+    def _payload_summary(self, payload: Any, preview: int = 180) -> str:
+        if isinstance(payload, dict):
+            keys = list(payload.keys())
+            rows = payload.get("rows")
+            data = payload.get("data")
+            data_len = len(data) if isinstance(data, list) else None
+            return f"dict keys={keys[:8]} rows={rows} data_len={data_len}"
+        if isinstance(payload, list):
+            return f"list len={len(payload)}"
+        if isinstance(payload, str):
+            flat = payload.replace("\n", " ").strip()
+            return f"str len={len(payload)} preview={flat[:preview]!r}"
+        return f"{type(payload).__name__}"
+
+    def _empty_plot(self, title: str = "No chart generated") -> Dict[str, Any]:
+        return {
+            "data": [],
+            "layout": {
+                "title": title,
+                "template": "plotly_white",
+            },
+        }
+
+    def _to_tethysdash_plot(self, payload: Any) -> Dict[str, Any]:
+        figure = self._extract_plotly_figure(payload)
+        if not isinstance(figure, dict):
+            LOGGER.warning(
+                "No plotly figure extracted; returning empty plot. payload=%s",
+                self._payload_summary(payload),
+            )
+            return self._empty_plot()
+
+        data = figure.get("data")
+        layout = figure.get("layout")
+
+        normalized: Dict[str, Any] = {
+            "data": data if isinstance(data, list) else [],
+            "layout": layout if isinstance(layout, dict) else {"title": "NRDS Chart"},
+        }
+
+        frames = figure.get("frames")
+        if isinstance(frames, list):
+            normalized["frames"] = frames
+
+        LOGGER.info("Normalized plotly figure with %s trace(s)", len(normalized["data"]))
+        return normalized
+
     async def process_tool_calls(self, tool_calls, messages):
         had_error = False
         last_err = None
         failed_signatures: list[str] = []
         plotly_figure: Optional[Dict[str, Any]] = None
+        last_query_result_payload: Optional[Dict[str, Any]] = None
+        called_tool_names: list[str] = []
 
         for tool_call in tool_calls:
             tool_name = tool_call["function"]["name"]
             args = tool_call["function"]["arguments"]
+            called_tool_names.append(tool_name)
 
             if isinstance(args, str):
                 try:
@@ -282,6 +342,12 @@ class NRDSChart(base.DataSource):
                     args = {"_raw": args}
 
             args = _normalize_query_tool_args(tool_name, args)
+            if tool_name == "create_plotly_chart_from_query_result":
+                args = _normalize_plotly_chart_tool_args(
+                    args,
+                    messages,
+                    fallback_query_result=last_query_result_payload,
+                )
 
             s3_url = args.get("s3_url")
             if isinstance(s3_url, str):
@@ -313,13 +379,33 @@ class NRDSChart(base.DataSource):
                     args["s3_url"] = _maybe_join_dir_and_filename(s3_url, q)
                     args["query"] = _rewrite_from_to_output(q)
 
+            LOGGER.info(
+                "Calling MCP tool '%s' with arg keys=%s",
+                tool_name,
+                sorted(args.keys()) if isinstance(args, dict) else [type(args).__name__],
+            )
+
             call_signature = _tool_call_signature(
                 tool_name, args if isinstance(args, dict) else {"_raw": args}
             )
 
             tool_result = await self.execute_tool(tool_name, args)
+            LOGGER.info(
+                "Tool '%s' result summary: %s",
+                tool_name,
+                self._payload_summary(tool_result),
+            )
+            if tool_name in {"query_parquet_output_file", "query_netcdf_output_file"}:
+                if isinstance(tool_result, dict):
+                    last_query_result_payload = tool_result
             if plotly_figure is None:
                 plotly_figure = self._extract_plotly_figure(tool_result)
+                if plotly_figure is not None:
+                    LOGGER.info(
+                        "Detected plotly figure from tool '%s' with %s trace(s)",
+                        tool_name,
+                        len(plotly_figure.get("data", [])),
+                    )
             tool_result_for_context = _compact_tool_result_for_context(tool_result)
 
             messages.append(
@@ -337,12 +423,28 @@ class NRDSChart(base.DataSource):
                 had_error = True
                 last_err = err_text
                 failed_signatures.append(call_signature)
+                LOGGER.warning("Tool '%s' returned error: %s", tool_name, err_text)
+
+        if plotly_figure is None:
+            LOGGER.warning(
+                "No plotly figure detected from tool calls: %s",
+                called_tool_names,
+            )
 
         return had_error, last_err, failed_signatures, plotly_figure
 
     async def get_chart(self, request_id=None):
         try:
             tools = await self.load_mcp_tools()
+            LOGGER.info(
+                "Loaded %s MCP tool(s); plotly tool present=%s",
+                len(tools),
+                any(
+                    _as_dict(t).get("function", {}).get("name")
+                    == "create_plotly_chart_from_query_result"
+                    for t in tools
+                ),
+            )
         except Exception as e:
             LOGGER.error("Error connecting to MCP server: %s", e)
             return
@@ -379,6 +481,10 @@ class NRDSChart(base.DataSource):
             if not tool_calls:
                 assistant_text = msg.get("content", "")
                 messages.append({"role": "assistant", "content": assistant_text})
+                LOGGER.warning(
+                    "Assistant returned text without tool_calls; cannot produce chart. text=%r",
+                    (assistant_text or "")[:300],
+                )
                 await self._ws_send(request_id, assistant_text)
                 break
 
@@ -462,12 +568,15 @@ class NRDSChart(base.DataSource):
             continue
 
         LOGGER.info("Bye!")
+        LOGGER.warning("get_chart exited without a plotly figure; returning None")
         return None
 
     def main(self, request_id=None):
         try:
             chart = asyncio.run(self.get_chart(request_id))
+            LOGGER.info("NRDSChart.main chart summary: %s", self._payload_summary(chart))
             return chart
         except Exception as e:
             logger.error(e)
-            return None
+            LOGGER.exception("NRDSChart.main failed, returning empty plot")
+            return self._empty_plot("Failed to generate chart")

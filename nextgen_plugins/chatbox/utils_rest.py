@@ -1,7 +1,118 @@
 from datetime import datetime
+from typing import Any, Dict, List, Optional
+import json
+import ast
 import pandas as pd
 import duckdb
 import xarray as xr
+
+
+def _strip_markdown_code_fence(text: str) -> str:
+    s = (text or "").strip()
+    if not s.startswith("```"):
+        return s
+
+    lines = s.splitlines()
+    if lines and lines[0].lstrip().startswith("```"):
+        lines = lines[1:]
+    if lines and lines[-1].strip() == "```":
+        lines = lines[:-1]
+    return "\n".join(lines).strip()
+
+
+def _extract_first_json_object(text: str) -> Dict[str, Any] | None:
+    decoder = json.JSONDecoder()
+    for i, ch in enumerate(text):
+        if ch != "{":
+            continue
+        try:
+            obj, _ = decoder.raw_decode(text[i:])
+        except Exception:
+            continue
+        if isinstance(obj, dict):
+            return obj
+    return None
+
+
+def _parse_query_result_payload(query_result: Dict[str, Any] | str) -> Dict[str, Any]:
+    if isinstance(query_result, dict):
+        return query_result
+    if isinstance(query_result, str):
+        s = _strip_markdown_code_fence(query_result)
+        if not s:
+            raise ValueError("query_result string is empty.")
+
+        try:
+            payload = json.loads(s)
+            if isinstance(payload, dict):
+                return payload
+        except Exception:
+            payload = None
+
+        payload = _extract_first_json_object(s)
+        if isinstance(payload, dict):
+            return payload
+
+        try:
+            payload = ast.literal_eval(s)
+            if isinstance(payload, dict):
+                return payload
+        except Exception:
+            pass
+
+    raise ValueError("query_result must be a JSON object or JSON object string.")
+
+
+def _is_numeric_value(v: Any) -> bool:
+    return isinstance(v, (int, float)) and not isinstance(v, bool)
+
+
+def _coerce_rows_to_records(rows: List[Any], columns: Any) -> Optional[List[Dict[str, Any]]]:
+    if not rows:
+        return []
+    if isinstance(rows[0], dict):
+        return rows  # type: ignore[return-value]
+
+    if all(isinstance(r, (list, tuple)) for r in rows):
+        col_names = [str(c) for c in columns] if isinstance(columns, list) else []
+        max_width = max(len(r) for r in rows)
+        if len(col_names) < max_width:
+            col_names.extend(f"col_{i+1}" for i in range(len(col_names), max_width))
+        if not col_names:
+            col_names = [f"col_{i+1}" for i in range(max_width)]
+
+        return [
+            {col_names[i]: (r[i] if i < len(r) else None) for i in range(len(col_names))}
+            for r in rows
+        ]
+
+    if all(not isinstance(r, (dict, list, tuple)) for r in rows):
+        col_name = str(columns[0]) if isinstance(columns, list) and columns else "value"
+        return [{col_name: r} for r in rows]
+
+    return None
+
+
+def _auto_pick_axes(columns: List[str], rows: List[Dict[str, Any]], x: Optional[str], y: Optional[str]) -> tuple[str, str]:
+    if not columns:
+        raise ValueError("No columns available to infer x/y axes.")
+
+    picked_x = x if x in columns else ("time" if "time" in columns else columns[0])
+    if y in columns and y != picked_x:
+        return picked_x, y
+
+    for col in columns:
+        if col == picked_x:
+            continue
+        if any(_is_numeric_value(r.get(col)) for r in rows):
+            return picked_x, col
+
+    raise ValueError(
+        "Could not infer a numeric y axis. Provide y=<numeric column name> explicitly."
+    )
+
+
+
 
 
 def _get_troute_df(s3_nc_url: str) -> pd.DataFrame:

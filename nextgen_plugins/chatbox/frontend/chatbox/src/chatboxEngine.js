@@ -11,8 +11,10 @@ import {
   generateFileMsg,
   getMessage,
   isPlausibleOutputsFile,
+  lastToolPlotlyFigure,
   lastToolFileUrl,
   maybeJoinDirAndFilename,
+  normalizePlotlyChartToolArgs,
   normalizeQueryToolArgs,
   printContextUsage,
   rewriteFromToOutput,
@@ -174,7 +176,62 @@ const BUILTIN_TOOLS = [
       },
     },
   },
+  {
+    type: "function",
+    function: {
+      name: "create_plotly_chart_from_query_result",
+      description: "Create a Plotly-compatible chart JSON from a query_* result payload.",
+      parameters: {
+        type: "object",
+        properties: {
+          query_result: {
+            type: "object",
+            description: "Full payload from query_parquet_output_file or query_netcdf_output_file.",
+          },
+          chart_type: {
+            type: "string",
+            enum: ["line", "scatter", "bar"],
+            description: "Chart type.",
+          },
+          x: { type: "string", description: "Column for x-axis." },
+          y: { type: "string", description: "Column for y-axis." },
+          color: { type: "string", description: "Optional grouping column." },
+          title: { type: "string", description: "Optional title." },
+          max_points: { type: "integer", minimum: 1, maximum: 50000 },
+        },
+        required: ["query_result"],
+        additionalProperties: false,
+      },
+    },
+  },
 ];
+
+function ensurePlotlyChartTool(tools) {
+  const builtinPlotly = BUILTIN_TOOLS.find(
+    (tool) => tool?.function?.name === "create_plotly_chart_from_query_result",
+  );
+
+  if (!builtinPlotly) {
+    return Array.isArray(tools) && tools.length ? tools : BUILTIN_TOOLS;
+  }
+
+  if (!Array.isArray(tools) || !tools.length) {
+    return BUILTIN_TOOLS;
+  }
+
+  const normalized = [...tools];
+  const index = normalized.findIndex(
+    (tool) => tool?.function?.name === "create_plotly_chart_from_query_result",
+  );
+
+  if (index >= 0) {
+    // Replace the MCP-provided schema with the simpler built-in schema.
+    normalized[index] = builtinPlotly;
+    return normalized;
+  }
+
+  return [...normalized, builtinPlotly];
+}
 
 function omitEmptyArgs(args) {
   const cleaned = {};
@@ -288,7 +345,7 @@ async function loadTools(mcpClient) {
     const response = await mcpClient.listTools();
     const toolsList = Array.isArray(response?.tools) ? response.tools : [];
     if (toolsList.length) {
-      return toolsList.map((tool) => {
+      const mappedTools = toolsList.map((tool) => {
         const parameters =
           tool?.inputSchema && typeof tool.inputSchema === "object"
             ? tool.inputSchema
@@ -303,6 +360,13 @@ async function loadTools(mcpClient) {
           },
         };
       });
+      const finalTools = ensurePlotlyChartTool(mappedTools);
+      const plotlyTool = finalTools.find(
+        (tool) => tool?.function?.name === "create_plotly_chart_from_query_result",
+      );
+      console.debug("Plotly tool sent to Ollama:", plotlyTool);
+      return finalTools;
+
     }
   } catch (error) {
     console.error("Error loading tools from MCP server:", error);
@@ -310,23 +374,23 @@ async function loadTools(mcpClient) {
 
   const toolsUrl = (import.meta.env.VITE_CHATBOX_TOOLS_URL ?? "").trim();
   if (!toolsUrl) {
-    return BUILTIN_TOOLS;
+    return ensurePlotlyChartTool(BUILTIN_TOOLS);
   }
 
   try {
     const response = await fetch(toolsUrl, { method: "GET" });
     if (!response.ok) {
-      return BUILTIN_TOOLS;
+      return ensurePlotlyChartTool(BUILTIN_TOOLS);
     }
     const payload = await response.json();
     if (Array.isArray(payload)) {
-      return payload;
+      return ensurePlotlyChartTool(payload);
     }
   } catch {
-    return BUILTIN_TOOLS;
+    return ensurePlotlyChartTool(BUILTIN_TOOLS);
   }
 
-  return BUILTIN_TOOLS;
+  return ensurePlotlyChartTool(BUILTIN_TOOLS);
 }
 
 async function executeTool(toolName, args, mcpClient) {
@@ -440,6 +504,7 @@ async function processToolCalls(toolCalls, messages, mcpClient) {
   let hadError = false;
   let lastErr = null;
   const failedSignatures = [];
+  let lastQueryResultPayload = null;
 
   for (const toolCall of toolCalls) {
     let toolName = toolCall?.function?.name;
@@ -454,6 +519,9 @@ async function processToolCalls(toolCalls, messages, mcpClient) {
     }
 
     args = normalizeQueryToolArgs(toolName, args);
+    if (toolName === "create_plotly_chart_from_query_result") {
+      args = normalizePlotlyChartToolArgs(args, messages, lastQueryResultPayload);
+    }
 
     const s3Url = typeof args?.s3_url === "string" ? args.s3_url : null;
     if (s3Url && s3Url.toLowerCase().endsWith(".parquet") && toolName === "query_netcdf_output_file") {
@@ -497,7 +565,16 @@ async function processToolCalls(toolCalls, messages, mcpClient) {
     const callSignature = toolCallSignature(toolName, signatureArgs);
 
     const toolResult = await executeTool(toolName, args, mcpClient);
-    const compactResult = compactToolResultForContext(toolResult);
+    if (
+      (toolName === "query_parquet_output_file" || toolName === "query_netcdf_output_file") &&
+      toolResult &&
+      typeof toolResult === "object" &&
+      !Array.isArray(toolResult)
+    ) {
+      lastQueryResultPayload = toolResult;
+    }
+    // const compactResult = compactToolResultForContext(toolResult);
+    const compactResult = toolResult;
     messages.push({
       role: "tool",
       tool_name: toolName,
@@ -531,7 +608,7 @@ export async function runChatSession({
 
   const text = typeof prompt === "string" ? prompt : "";
   if (!text || [":q", ":quit", "quit", "exit"].includes(text.trim().toLowerCase())) {
-    return { assistantText: "", messages };
+    return { assistantText: "", messages, plotlyFigure: null };
   }
 
   const mcpConnection = await createMcpConnection(mcpServerUrl);
@@ -563,16 +640,19 @@ export async function runChatSession({
 
       const message = getMessage(response);
       let toolCalls = Array.isArray(message.tool_calls) ? message.tool_calls : [];
-
+      console.log("Assistant message content:", message.content);
+      console.log("Assistant message thinking:", message.thinking);
+      console.log("Assistant message tool_calls:", message.tool_calls);
       if (!toolCalls.length) {
         const assistantContent = typeof message.content === "string" ? message.content : "";
         toolCalls = extractInlineToolCalls(assistantContent);
+        console.log("Inline extracted toolCalls:", toolCalls);
       }
 
       if (!toolCalls.length) {
         const assistantText = typeof message.content === "string" ? message.content : "";
         messages.push({ role: "assistant", content: assistantText });
-        return { assistantText, messages };
+        return { assistantText, messages, plotlyFigure: lastToolPlotlyFigure(messages) };
       }
 
       if (!Object.prototype.hasOwnProperty.call(message, "tool_calls")) {

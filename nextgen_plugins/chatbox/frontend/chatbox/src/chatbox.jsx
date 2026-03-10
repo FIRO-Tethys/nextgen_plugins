@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { runChatSession } from "./chatboxEngine";
+import PlotlyChart from "./PlotlyChart";
 
 function ChatBox({ thinkingEnabled = true, model = "qwen3", prompt = "" }) {
   const [messages, setMessages] = useState([]);
@@ -37,7 +38,14 @@ function ChatBox({ thinkingEnabled = true, model = "qwen3", prompt = "" }) {
         },
       });
 
-      setMessages((prev) => [...prev, { role: "assistant", content: result.assistantText || "" }]);
+      setMessages((prev) => [
+        ...prev,
+        {
+          role: "assistant",
+          content: result.assistantText || "",
+          figure: result.plotlyFigure ?? null,
+        },
+      ]);
     } catch (err) {
       setError(String(err?.message ?? err));
     } finally {
@@ -61,7 +69,8 @@ function ChatBox({ thinkingEnabled = true, model = "qwen3", prompt = "" }) {
             className={`chat-bubble ${message.role === "user" ? "chat-user" : "chat-assistant"}`}
           >
             <strong>{message.role === "user" ? "You" : "Assistant"}</strong>
-            <p>{message.content}</p>
+            {message.content ? <p>{message.content}</p> : null}
+            {message.figure ? <PlotlyChart figure={message.figure} /> : null}
           </article>
         ))}
         {loading && <p className="chat-status">Running...</p>}

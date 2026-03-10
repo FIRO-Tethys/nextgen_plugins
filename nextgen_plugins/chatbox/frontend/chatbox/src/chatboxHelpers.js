@@ -79,6 +79,60 @@ function parseFirstJsonObject(text, startIndex) {
   return null;
 }
 
+function stripMarkdownCodeFence(text) {
+  const raw = String(text ?? "").trim();
+  if (!raw.startsWith("```")) {
+    return raw;
+  }
+
+  const lines = raw.split("\n");
+  if (lines.length && lines[0].trimStart().startsWith("```")) {
+    lines.shift();
+  }
+  if (lines.length && lines[lines.length - 1].trim() === "```") {
+    lines.pop();
+  }
+  return lines.join("\n").trim();
+}
+
+function extractFirstJsonObject(text) {
+  for (let i = 0; i < text.length; i += 1) {
+    if (text[i] !== "{") {
+      continue;
+    }
+    const parsed = parseFirstJsonObject(text, i);
+    if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+      return parsed;
+    }
+  }
+  return null;
+}
+
+function coerceJsonObject(value) {
+  if (value && typeof value === "object" && !Array.isArray(value)) {
+    return value;
+  }
+  if (typeof value !== "string") {
+    return null;
+  }
+
+  const stripped = stripMarkdownCodeFence(value);
+  if (!stripped) {
+    return null;
+  }
+
+  try {
+    const parsed = JSON.parse(stripped);
+    if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+      return parsed;
+    }
+  } catch {
+    // Fall through to relaxed extraction.
+  }
+
+  return extractFirstJsonObject(stripped);
+}
+
 function getFirstPath(payload) {
   if (!payload || typeof payload !== "object") {
     return null;
@@ -325,6 +379,76 @@ export function normalizeQueryToolArgs(toolName, args) {
   return args;
 }
 
+function lastQueryToolPayload(messages) {
+  const queryTools = new Set(["query_parquet_output_file", "query_netcdf_output_file"]);
+  for (let i = messages.length - 1; i >= 0; i -= 1) {
+    const message = messages[i];
+    if (!message || message.role !== "tool" || !queryTools.has(message.tool_name)) {
+      continue;
+    }
+    const payload = coerceJsonObject(message.content);
+    if (payload) {
+      return payload;
+    }
+  }
+  return null;
+}
+
+export function normalizePlotlyChartToolArgs(args, messages, fallbackQueryResult = null) {
+  let normalizedArgs = args;
+  console.log("Normalizing Plotly chart tool args:", args);
+  if (typeof normalizedArgs === "string") {
+    const parsed = coerceJsonObject(normalizedArgs);
+    normalizedArgs = parsed ?? { query_result: normalizedArgs };
+  } else if (!normalizedArgs || typeof normalizedArgs !== "object" || Array.isArray(normalizedArgs)) {
+    normalizedArgs = {};
+  }
+
+  const cleaned = {};
+  for (const key of ["chart_type", "x", "y", "color", "title", "max_points"]) {
+    const value = normalizedArgs[key];
+    if (value === null || value === undefined || value === "") {
+      continue;
+    }
+    cleaned[key] = value;
+  }
+
+  if (typeof cleaned.max_points === "string") {
+    const parsedMax = Number.parseInt(cleaned.max_points.trim(), 10);
+    if (Number.isFinite(parsedMax)) {
+      cleaned.max_points = parsedMax;
+    } else {
+      delete cleaned.max_points;
+    }
+  }
+
+  let queryResultCandidate = normalizedArgs.query_result;
+  if (queryResultCandidate === null || queryResultCandidate === undefined) {
+    for (const alt of ["result", "payload", "query_payload", "query_response", "query_data", "data"]) {
+      if (normalizedArgs[alt] !== null && normalizedArgs[alt] !== undefined) {
+        queryResultCandidate = normalizedArgs[alt];
+        break;
+      }
+    }
+  }
+
+  let coercedQueryResult = coerceJsonObject(queryResultCandidate);
+  if (!coercedQueryResult && fallbackQueryResult && typeof fallbackQueryResult === "object" && !Array.isArray(fallbackQueryResult)) {
+    coercedQueryResult = fallbackQueryResult;
+  }
+  if (!coercedQueryResult) {
+    coercedQueryResult = lastQueryToolPayload(messages);
+  }
+
+  if (coercedQueryResult) {
+    cleaned.query_result = coercedQueryResult;
+  } else if (queryResultCandidate !== null && queryResultCandidate !== undefined) {
+    cleaned.query_result = queryResultCandidate;
+  }
+
+  return cleaned;
+}
+
 export function generateAutoFixToolMsg(lastErr, priorUserText = "", repeatedSignature = null) {
   const errLower = (lastErr ?? "").toLowerCase();
   const chainHints = [];
@@ -382,6 +506,52 @@ export function getMessage(resp) {
     return {};
   }
   return message;
+}
+
+function extractPlotlyFigure(payload) {
+  if (!payload || typeof payload !== "object" || Array.isArray(payload)) {
+    return null;
+  }
+
+  let figure = payload.figure;
+  if (typeof figure === "string") {
+    try {
+      figure = JSON.parse(figure);
+    } catch {
+      figure = null;
+    }
+  }
+
+  if (figure && typeof figure === "object" && !Array.isArray(figure) && Array.isArray(figure.data)) {
+    return figure;
+  }
+
+  if (Array.isArray(payload.data) && payload.layout && typeof payload.layout === "object") {
+    return payload;
+  }
+
+  return null;
+}
+
+export function lastToolPlotlyFigure(messages) {
+  for (let i = messages.length - 1; i >= 0; i -= 1) {
+    const message = messages[i];
+    if (!message || message.role !== "tool") {
+      continue;
+    }
+
+    const payload = coerceJsonObject(message.content);
+    if (!payload) {
+      continue;
+    }
+
+    const figure = extractPlotlyFigure(payload);
+    if (figure) {
+      return figure;
+    }
+  }
+
+  return null;
 }
 
 export function toolCallSignature(toolName, args) {

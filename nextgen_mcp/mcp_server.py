@@ -1,4 +1,7 @@
 import json
+import ast
+import logging
+import os
 from typing import Optional, Dict, Any, List, Literal
 from typing_extensions import Annotated
 from pydantic import Field
@@ -23,6 +26,23 @@ from .validations import (
 )
 
 mcp = FastMCP("NRDS MCP Server")
+LOGGER = logging.getLogger(__name__)
+
+
+def _configure_runtime_logging() -> None:
+    level_name = os.getenv("NRDS_LOG_LEVEL", "INFO").upper()
+    level_value = getattr(logging, level_name, logging.INFO)
+    root_logger = logging.getLogger()
+
+    if not root_logger.handlers:
+        logging.basicConfig(
+            level=level_value,
+            format="%(asctime)s %(levelname)s %(name)s: %(message)s",
+        )
+    else:
+        root_logger.setLevel(level_value)
+
+    logging.getLogger("nextgen_plugins.chatbox.rest").setLevel(level_value)
 
 # ---- Date bounds helpers (DEFAULT_START .. today in DEFAULT_TZ) ----
 _MIN_ALLOWED_DATE = _parse_iso_date(DEFAULT_START)
@@ -376,39 +396,6 @@ def query_netcdf_output_file_tool(
     return _get_json_raw("query_netcdf_output_file", params={"s3_url": s3_url, "query": query})
 
 
-def _parse_query_result_payload(query_result: Dict[str, Any] | str) -> Dict[str, Any]:
-    if isinstance(query_result, dict):
-        return query_result
-    if isinstance(query_result, str):
-        payload = json.loads(query_result)
-        if isinstance(payload, dict):
-            return payload
-    raise ValueError("query_result must be a JSON object or JSON object string.")
-
-
-def _is_numeric_value(v: Any) -> bool:
-    return isinstance(v, (int, float)) and not isinstance(v, bool)
-
-
-def _auto_pick_axes(columns: List[str], rows: List[Dict[str, Any]], x: Optional[str], y: Optional[str]) -> tuple[str, str]:
-    if not columns:
-        raise ValueError("No columns available to infer x/y axes.")
-
-    picked_x = x if x in columns else ("time" if "time" in columns else columns[0])
-    if y in columns and y != picked_x:
-        return picked_x, y
-
-    for col in columns:
-        if col == picked_x:
-            continue
-        if any(_is_numeric_value(r.get(col)) for r in rows):
-            return picked_x, col
-
-    raise ValueError(
-        "Could not infer a numeric y axis. Provide y=<numeric column name> explicitly."
-    )
-
-
 @mcp.tool(
     name="create_plotly_chart_from_query_result",
     description=(
@@ -419,11 +406,11 @@ def _auto_pick_axes(columns: List[str], rows: List[Dict[str, Any]], x: Optional[
 )
 def create_plotly_chart_from_query_result_tool(
     query_result: Annotated[
-        Dict[str, Any] | str,
+        Dict[str, Any],
         Field(
             description=(
-                "Result payload returned by query_parquet_output_file or "
-                "query_netcdf_output_file (dict or JSON string)."
+                "Full result payload returned by query_parquet_output_file or "
+                "query_netcdf_output_file."
             )
         ),
     ],
@@ -452,93 +439,27 @@ def create_plotly_chart_from_query_result_tool(
         Field(ge=1, le=50000, description="Maximum number of rows to plot."),
     ] = 5000,
 ) -> Dict[str, Any]:
-    payload = _parse_query_result_payload(query_result)
-
-    if payload.get("error"):
-        raise ValueError(f"Cannot chart errored query result: {payload.get('error')}")
-
-    rows = payload.get("data") or []
-    if not isinstance(rows, list):
-        raise ValueError("query_result.data must be a list.")
-    if not rows:
-        return {
-            "figure": {"data": [], "layout": {"title": title or "No data to plot"}},
-            "rows": 0,
-            "message": "Query returned no rows.",
-        }
-
-    first_row = rows[0]
-    if not isinstance(first_row, dict):
-        raise ValueError("query_result.data must be a list of objects.")
-
-    columns = payload.get("columns")
-    if not isinstance(columns, list) or not columns:
-        columns = list(first_row.keys())
-    columns = [str(c) for c in columns]
-
-    if color is not None and color not in columns:
-        raise ValueError(f"color column '{color}' not found in result columns: {columns}")
-
-    x_col, y_col = _auto_pick_axes(columns, rows, x, y)
-    limited_rows = rows[:max_points]
-
-    mode = "lines" if chart_type == "line" else "markers"
-    trace_type = "bar" if chart_type == "bar" else "scatter"
-
-    traces: List[Dict[str, Any]] = []
-    if color:
-        groups: Dict[str, List[Dict[str, Any]]] = {}
-        for row in limited_rows:
-            key = str(row.get(color, "null"))
-            groups.setdefault(key, []).append(row)
-
-        for group_name, group_rows in groups.items():
-            traces.append(
-                {
-                    "type": trace_type,
-                    "mode": mode if trace_type == "scatter" else None,
-                    "name": f"{y_col} ({group_name})",
-                    "x": [r.get(x_col) for r in group_rows],
-                    "y": [r.get(y_col) for r in group_rows],
-                }
-            )
-    else:
-        traces.append(
-            {
-                "type": trace_type,
-                "mode": mode if trace_type == "scatter" else None,
-                "name": y_col,
-                "x": [r.get(x_col) for r in limited_rows],
-                "y": [r.get(y_col) for r in limited_rows],
-            }
-        )
-
-    # Remove null mode for bar traces to keep clean plotly spec
-    for t in traces:
-        if t.get("type") == "bar":
-            t.pop("mode", None)
-
-    figure = {
-        "data": traces,
-        "layout": {
-            "title": title or f"{chart_type.title()} chart of {y_col} vs {x_col}",
-            "template": "plotly_white",
-            "xaxis": {"title": x_col},
-            "yaxis": {"title": y_col},
-        },
-    }
-
-    return {
-        "figure": figure,
+    LOGGER.info(
+        "Tool create_plotly_chart_from_query_result called (chart_type=%s, x=%s, y=%s, color=%s, max_points=%s, query_result_type=%s)",
+        chart_type,
+        x,
+        y,
+        color,
+        max_points,
+        type(query_result).__name__,
+    )
+    return _get_json_raw("create_plotly_chart_from_query_result", params={
+        "query_result": query_result,
         "chart_type": chart_type,
-        "x": x_col,
-        "y": y_col,
+        "x": x,
+        "y": y,
         "color": color,
-        "rows": len(rows),
-        "rows_plotted": len(limited_rows),
-        "rows_truncated": len(rows) > len(limited_rows),
-    }
+        "title": title,
+        "max_points": max_points,
+    }) 
+
 
 
 if __name__ == "__main__":
+    _configure_runtime_logging()
     mcp.run(transport="sse", port=9000)

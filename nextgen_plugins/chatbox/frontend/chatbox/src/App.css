@@ -46,6 +46,25 @@
   white-space: pre-wrap;
 }
 
+.chart-panel {
+  margin-top: 0.65rem;
+  border: 1px solid #c8d8e2;
+  border-radius: 10px;
+  background: #ffffff;
+  padding: 0.35rem;
+  min-height: 320px;
+}
+
+.chart-plot {
+  width: 100%;
+  min-height: 300px;
+}
+
+.chart-plot .js-plotly-plot,
+.chart-plot .plot-container {
+  width: 100% !important;
+}
+
 .chat-user {
   background: #d9ecff;
 }
@@ -116,4 +135,14 @@
 .chat-input button:disabled {
   opacity: 0.65;
   cursor: not-allowed;
+}
+
+@media (max-width: 640px) {
+  .chart-panel {
+    min-height: 260px;
+  }
+
+  .chart-plot {
+    min-height: 240px;
+  }
 }

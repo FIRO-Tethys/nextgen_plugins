@@ -1,8 +1,13 @@
 import fsspec
 import os
+import json
+import logging
 import pandas as pd
+import plotly.express as px
+from plotly.utils import PlotlyJSONEncoder
+
 from datetime import datetime
-from typing import Dict
+from typing import Dict, List, Any, Optional
 from .validators import OutputsFilesQuery
 from pydantic import ValidationError
 from .utils_rest import (
@@ -11,8 +16,14 @@ from .utils_rest import (
     _normalize_date_folder,
     _duckdb_query_parquet,
     _duckdb_query_netcdf,
-    _get_troute_df
+    _get_troute_df,
+    _parse_query_result_payload,
+    _coerce_rows_to_records,
+    _auto_pick_axes,
 )
+
+logger = logging.getLogger(__name__)
+logger.setLevel(logging.INFO)
 
 BUCKET = os.getenv("BUCKET","ciroh-community-ngen-datastream")
 OUTPUTS_DIR = "outputs"
@@ -27,6 +38,7 @@ def _ensure_full_s3_url(path: str) -> str:
 
 def list_available_outputs_files(data) -> Dict:
     """List Outputs for a given model, date, forecast, cycle, and vpu."""
+    logger.info(f"Received request to list available output files with data: {data}")
     try:
         q = OutputsFilesQuery.model_validate(data)
     except ValidationError as e:
@@ -53,14 +65,17 @@ def list_available_outputs_files(data) -> Dict:
         file_names = [f.split("/troute/")[-1] for f in outputs]
         file_paths = [os.path.join(s3_url, f) for f in file_names]
         files = [{"name": fname, "path": fpath} for fname, fpath in zip(file_names, file_paths)]
+        logger.info(f"Found {len(files)} files at {s3_url}")
         return {"files": files}
 
     except FileNotFoundError:
         # valid request, just no outputs at that path
+        logger.info(f"No files found at {s3_url}")
         return {"path": s3_url, "files": []}
 
 def get_output_file(model, date, forecast, cycle, vpu, file_name=None, index=None, ensemble=None) -> Dict:
     # build directory like your other endpoints
+    logger.info(f"Received request to get output file with model={model}, date={date}, forecast={forecast}, cycle={cycle}, vpu={vpu}, file_name={file_name}, index={index}, ensemble={ensemble}")
     date = _normalize_date_folder(date)
     s3_dir = f"s3://{BUCKET}/{OUTPUTS_DIR}/{model}/{PREFIX_HYDROFABRIC}/{date}/{forecast}/{cycle}"
     if forecast == "medium_range":
@@ -82,28 +97,34 @@ def get_output_file(model, date, forecast, cycle, vpu, file_name=None, index=Non
         if file_name:
             sel = next((it for it in items if it["name"] == file_name), None)
             if not sel:
+                logger.error(f"file_name '{file_name}' not found in {s3_dir}")
                 return {"dir": s3_dir, "count": len(items), "error": f"file_name not found: {file_name}"}
         else:
             # index selection
             if index is None:
+                logger.error(f"Neither file_name nor index provided to select output file in {s3_dir}")
                 return {"dir": s3_dir, "count": len(items), "error": "Provide file_name or index"}    
                 
             try:
                 idx = int(index)
             except Exception:
+                logger.error(f"Invalid index value: {index}. Must be an integer.")
                 return {"error": "index must be an integer"}
 
             if idx < 0 or idx >= len(items):
+                logger.error(f"Index out of range: {index}. Must be between 0 and {len(items)-1}.")
                 return {"dir": s3_dir, "count": len(items), "error": f"index out of range: {idx}"}
             sel = items[idx]
-
+        logger.info(f"Selected file for retrieval: {sel['name']} at {sel['path']}")
         return {"dir": s3_dir, "count": len(items), "selected": sel}
 
     except FileNotFoundError:
+        logger.info(f"No files found at {s3_dir}")
         return {"dir": s3_dir, "count": 0, "selected": None}
 
 def list_available_vpus(model, date, forecast, cycle) -> Dict:
     """List VPUs for a given model, date, forecast, and cycle."""
+    logger.info(f"Listing VPUs for model={model}, date={date}, forecast={forecast}, cycle={cycle}")
     date = _normalize_date_folder(date)
     s3_url = f"s3://{BUCKET}/{OUTPUTS_DIR}/{model}/{PREFIX_HYDROFABRIC}/{date}/{forecast}/{cycle}"
     if forecast == "medium_range":
@@ -113,13 +134,13 @@ def list_available_vpus(model, date, forecast, cycle) -> Dict:
         dirs = fs.ls(s3_url, detail=False)
         vpu_ids = [d.split("/")[-1] for d in dirs]
         vpu_labels = [_label_from_id(v) for v in vpu_ids]
-        # vpus = [{"id": vid, "label": lbl} for vid, lbl in zip(vpu_ids, vpu_labels)]
-
+        logger.info(f"Found VPUs at {s3_url}: {vpu_labels}")
         return {
                 "path": s3_url,
                 "vpus": vpu_labels
             }
     except FileNotFoundError:
+        logger.info(f"No VPUs found at {s3_url}")
         return {
                 "path": s3_url,
                 "vpus": [],
@@ -127,6 +148,7 @@ def list_available_vpus(model, date, forecast, cycle) -> Dict:
 
 def list_available_cycles(model, date, forecast) -> Dict:
     """List available cycles for a given model, date, and forecast"""
+    logger.info(f"Listing cycles for model={model}, date={date}, forecast={forecast}")
     date = _normalize_date_folder(date)
     s3_url = f"s3://{BUCKET}/{OUTPUTS_DIR}/{model}/{PREFIX_HYDROFABRIC}/{date}/{forecast}/"
 
@@ -136,7 +158,7 @@ def list_available_cycles(model, date, forecast) -> Dict:
 
         cycle_ids = [d.split("/")[-1] for d in dirs]
         cycles = [{"id": c, "label": c} for c in cycle_ids]
-
+        logger.info(f"Found cycles at {s3_url}: {cycle_ids}")
         return {
                 "path": s3_url,
                 "cycles": cycles,
@@ -144,6 +166,7 @@ def list_available_cycles(model, date, forecast) -> Dict:
             
         
     except FileNotFoundError:
+            logger.info(f"No cycles found at {s3_url}")
             return {
                 "path": s3_url,
                 "cycles": [],
@@ -151,6 +174,7 @@ def list_available_cycles(model, date, forecast) -> Dict:
 
 def list_available_forecasts(model, date) -> Dict:
     """List available forecasts for a given model, date"""
+    logger.info(f"Listing forecasts for model={model}, date={date}")
     date = _normalize_date_folder(date)
     s3_url = f"s3://{BUCKET}/{OUTPUTS_DIR}/{model}/{PREFIX_HYDROFABRIC}/{date}/"
     try:
@@ -161,12 +185,13 @@ def list_available_forecasts(model, date) -> Dict:
         forecast_labels = [_label_from_id(f) for f in forecast_ids]
 
         forecasts = [{"id": fid, "label": lbl} for fid, lbl in zip(forecast_ids, forecast_labels)]
-
+        logger.info(f"Found forecasts at {s3_url}: {forecast_labels}")
         return {
                 "path": s3_url,
                 "forecasts": forecasts,
             }
     except FileNotFoundError:
+        logger.info(f"No forecasts found at {s3_url}")
         return {
                 "path": s3_url,
                 "forecasts": [],
@@ -174,6 +199,7 @@ def list_available_forecasts(model, date) -> Dict:
 
 def list_available_dates(model) -> Dict:
     """List available dates for a given model"""
+    logger.info(f"Listing dates for model={model}")
     s3_url = f"s3://{BUCKET}/{OUTPUTS_DIR}/{model}/{PREFIX_HYDROFABRIC}"
     try:
         fs = fsspec.filesystem("s3", anon=True)
@@ -189,47 +215,53 @@ def list_available_dates(model) -> Dict:
                 labels.append(folder)
 
         sorted_dates = sorted(labels, reverse=True)
+        logger.info(f"Found dates at {s3_url}: {sorted_dates}")
         return {
                 "path": s3_url,
                 "dates": sorted_dates,
             }
     except FileNotFoundError:
+        logger.info(f"No dates found at {s3_url}")
         return {
                 "path": s3_url,
                 "dates": [],
             }
 
 def list_available_models() -> Dict:
+    logger.info(f"Listing available models in bucket={BUCKET} under {OUTPUTS_DIR}")
     s3_url = f"s3://{BUCKET}/{OUTPUTS_DIR}"
     fs = fsspec.filesystem("s3", anon=True)
     try:
         dirs = fs.ls(s3_url, detail=False)
         model_ids = [d.split("/")[-1] for d in dirs]
+        logger.info(f"Found models at {s3_url}: {model_ids}")
         return {"path": s3_url, "models": [{"id": mid, "label": mid} for mid in model_ids]}
     except FileNotFoundError:
+        logger.info(f"No models found at {s3_url}")
         return {"path": s3_url, "models": []}
     
 def query_netcdf_output_file(s3_url, query) -> Dict:
     """Run a query against a netcdf output file on S3. Query params depend on the desired query."""
-    # For simplicity, we'll just read the whole file and return it here, but this could be extended to support more specific queries if needed.
+    logger.info(f"Received request to query NetCDF file at {s3_url} with query: {query}")    
     file_url = s3_url
     if file_url.startswith("s3://ciroh-community-ngen-datastream"):
         file_url = file_url.replace("s3://ciroh-community-ngen-datastream", "https://ciroh-community-ngen-datastream.s3.us-east-1.amazonaws.com")
  
     if not file_url:
+        logger.error("Missing required query param: s3_url")
         return {"error": "Missing required query param: s3_url"}
     if not query:
+        logger.error("Missing required query param: query")
         return {"error": "Missing required query param: query"}
 
     try:
         initial_df = _get_troute_df(file_url)
-        print(f"Initial DataFrame loaded with {len(initial_df)} rows and columns: {initial_df.columns.tolist()}")
+        logger.info(f"Initial DataFrame loaded with {len(initial_df)} rows and columns: {initial_df.columns.tolist()}")
         df = _duckdb_query_netcdf(initial_df, query)
-        print(f"Query returned {len(df)} rows and columns: {df.columns.tolist()}")
         # Make timestamps JSON-friendly
         if "time" in df.columns:
             df["time"] = pd.to_datetime(df["time"], errors="coerce").dt.strftime("%Y-%m-%dT%H:%M:%S.%fZ")
-
+        logger.info(f"Query returned {len(df)} rows and columns: {df.columns.tolist()}")
         return{
                 "file": file_url,
                 "query": query,
@@ -238,21 +270,24 @@ def query_netcdf_output_file(s3_url, query) -> Dict:
                 "data": df.to_dict(orient="records"),
             }
     except FileNotFoundError:
+        logger.error(f"File not found: {file_url}")
         return {"file": file_url, "query": query, "columns": [], "rows": 0, "data": []}
     except Exception as e:
+        logger.error(f"Error querying NetCDF file: {e}")
         return {"file": file_url, "query": query, "error": str(e)}
 
 def query_parquet_output_file(s3_url, query) -> Dict:
     """Run any DuckDB SQL query against a Parquet file on S3 (view name: `output`)."""
     file_url = s3_url
-    print(f"Received query request for file: {file_url} with query: {query}")
+    logger.info(f"Received query request for file: {file_url} with query: {query}")
     if file_url.startswith("s3://ciroh-community-ngen-datastream"):
         file_url = file_url.replace("s3://ciroh-community-ngen-datastream", "https://ciroh-community-ngen-datastream.s3.us-east-1.amazonaws.com")
-    
 
     if not file_url:
+        logger.error("Missing required query param: s3_url")
         return {"error": "Missing required query param: s3_url"}
     if not query:
+        logger.error("Missing required query param: query")
         return {"error": "Missing required query param: query"}
 
     try:
@@ -261,7 +296,7 @@ def query_parquet_output_file(s3_url, query) -> Dict:
         # Make timestamps JSON-friendly
         if "time" in df.columns:
             df["time"] = pd.to_datetime(df["time"], errors="coerce").dt.strftime("%Y-%m-%dT%H:%M:%S.%fZ")
-
+        logger.info(f"Query returned {len(df)} rows and columns: {df.columns.tolist()}")
         return{
                 "file": file_url,
                 "query": query,
@@ -270,6 +305,86 @@ def query_parquet_output_file(s3_url, query) -> Dict:
                 "data": df.to_dict(orient="records"),
             }
     except FileNotFoundError:
+        logger.error(f"File not found: {file_url}")
         return {"file": file_url, "query": query, "columns": [], "rows": 0, "data": []}
     except Exception as e:
+        logger.error(f"Error querying Parquet file: {e}")
         return {"file": file_url, "query": query, "error": str(e)}
+
+def create_plotly_chart_from_query_result(
+    query_result,
+    chart_type: str = "line",
+    x: Optional[List[str]] = None,
+    y: Optional[List[str]] = None,
+    color: Optional[str] = None,
+    title: Optional[str] = None,
+    max_points: Optional[int] = None,
+) -> Dict[str, Any]:
+    x = x or []
+    y = y or []
+
+    logger.info(
+        f"Creating Plotly chart from query result with chart_type={chart_type}, "
+        f"x={x}, y={y}, color={color}, title={title}, max_points={max_points}"
+    )
+    logger.info(f"Full query_result payload: {query_result}")
+    logger.info(f"Type of query_result: {type(query_result)}")
+
+    payload = _parse_query_result_payload(query_result)
+
+    if payload.get("error"):
+        raise ValueError(f"Cannot chart errored query result: {payload.get('error')}")
+
+    rows = payload.get("data") or []
+    if not isinstance(rows, list):
+        raise ValueError("query_result.data must be a list.")
+
+    if not rows:
+        return {
+            "data": [],
+            "layout": {
+                "title": {"text": title or "No data to plot"},
+                "template": "plotly_white",
+            },
+        }
+
+    df = pd.DataFrame(rows)
+
+    if max_points is not None:
+        df = df.head(max_points)
+
+    if "time" in df.columns:
+        df["time"] = pd.to_datetime(df["time"], utc=True, errors="coerce")
+
+    # plotly express expects scalar x/y for single-column plotting
+    x_arg = x[0] if isinstance(x, list) and len(x) == 1 else x
+    y_arg = y[0] if isinstance(y, list) and len(y) == 1 else y
+
+    if not x_arg:
+        x_arg = "time" if "time" in df.columns else df.columns[0]
+
+    if not y_arg:
+        numeric_cols = [c for c in df.columns if pd.api.types.is_numeric_dtype(df[c])]
+        y_arg = "flow" if "flow" in df.columns else (numeric_cols[0] if numeric_cols else df.columns[-1])
+
+    if chart_type == "bar":
+        fig = px.bar(
+            df,
+            x=x_arg,
+            y=y_arg,
+            color=color,
+            title=title,
+        )
+    else:
+        fig = px.line(
+            df,
+            x=x_arg,
+            y=y_arg,
+            color=color,
+            title=title,
+        )
+
+    fig.update_layout(template="plotly_white")
+
+    # Return a plain JSON-safe dict for the frontend
+    return json.loads(json.dumps(fig.to_plotly_json(), cls=PlotlyJSONEncoder))

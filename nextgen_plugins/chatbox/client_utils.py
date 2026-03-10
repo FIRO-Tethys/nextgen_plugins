@@ -1,7 +1,8 @@
 from typing import Optional, List, Dict, Any
+import ast
 import re
 import json
-from .messages import AUTO_FIX_SYSTEM_MSG, FILE_MSG
+from .messages_chat import AUTO_FIX_SYSTEM_MSG, FILE_MSG
 
 URL_RE = re.compile(r"(https?://\S+|s3://\S+)", re.IGNORECASE)
 
@@ -86,6 +87,125 @@ def _last_tool_file_url(messages, exts=(".parquet", ".nc", ".nc4")) -> str | Non
         if found:
             return found
     return None
+
+
+def _strip_markdown_code_fence(text: str) -> str:
+    s = (text or "").strip()
+    if not s.startswith("```"):
+        return s
+
+    lines = s.splitlines()
+    if lines and lines[0].lstrip().startswith("```"):
+        lines = lines[1:]
+    if lines and lines[-1].strip() == "```":
+        lines = lines[:-1]
+    return "\n".join(lines).strip()
+
+
+def _extract_first_json_object(text: str) -> Dict[str, Any] | None:
+    decoder = json.JSONDecoder()
+    for i, ch in enumerate(text):
+        if ch != "{":
+            continue
+        try:
+            obj, _ = decoder.raw_decode(text[i:])
+        except Exception:
+            continue
+        if isinstance(obj, dict):
+            return obj
+    return None
+
+
+def _coerce_json_object(value: Any) -> Dict[str, Any] | None:
+    if isinstance(value, dict):
+        return value
+    if isinstance(value, bytes):
+        value = value.decode("utf-8", errors="ignore")
+    if not isinstance(value, str):
+        return None
+
+    s = _strip_markdown_code_fence(value)
+    if not s:
+        return None
+
+    try:
+        parsed = json.loads(s)
+        if isinstance(parsed, dict):
+            return parsed
+    except Exception:
+        pass
+
+    parsed = _extract_first_json_object(s)
+    if isinstance(parsed, dict):
+        return parsed
+
+    try:
+        parsed = ast.literal_eval(s)
+        if isinstance(parsed, dict):
+            return parsed
+    except Exception:
+        pass
+
+    return None
+
+
+def _last_query_tool_payload(messages) -> Dict[str, Any] | None:
+    query_tools = {"query_parquet_output_file", "query_netcdf_output_file"}
+    for m in reversed(messages):
+        if not isinstance(m, dict) or m.get("role") != "tool":
+            continue
+        if m.get("tool_name") not in query_tools:
+            continue
+        payload = _coerce_json_object(m.get("content"))
+        if isinstance(payload, dict):
+            return payload
+    return None
+
+
+def _normalize_plotly_chart_tool_args(
+    args: Any,
+    messages,
+    fallback_query_result: Dict[str, Any] | None = None,
+) -> Dict[str, Any]:
+    if isinstance(args, str):
+        parsed = _coerce_json_object(args)
+        args = parsed if isinstance(parsed, dict) else {"query_result": args}
+    elif not isinstance(args, dict):
+        args = {}
+
+    cleaned: Dict[str, Any] = {}
+    for key in ("chart_type", "x", "y", "color", "title", "max_points"):
+        value = args.get(key)
+        if value is None or value == "":
+            continue
+        cleaned[key] = value
+
+    max_points = cleaned.get("max_points")
+    if isinstance(max_points, str):
+        try:
+            cleaned["max_points"] = int(max_points.strip())
+        except Exception:
+            cleaned.pop("max_points", None)
+
+    query_result_candidate = args.get("query_result")
+    if query_result_candidate is None:
+        for alt in ("result", "payload", "query_payload", "query_response", "query_data", "data"):
+            if alt in args and args.get(alt) is not None:
+                query_result_candidate = args.get(alt)
+                break
+
+    coerced_query_result = _coerce_json_object(query_result_candidate)
+    if coerced_query_result is None and isinstance(fallback_query_result, dict):
+        coerced_query_result = fallback_query_result
+    if coerced_query_result is None:
+        coerced_query_result = _last_query_tool_payload(messages)
+
+    if isinstance(coerced_query_result, dict):
+        cleaned["query_result"] = coerced_query_result
+    elif query_result_candidate is not None:
+        cleaned["query_result"] = query_result_candidate
+
+    return cleaned
 
 
 def _maybe_join_dir_and_filename(s3_url: str, query: str) -> str:

@@ -13,7 +13,8 @@ from nextgen_plugins.chatbox.rest import (
     list_available_outputs_files,
     get_output_file,
     query_parquet_output_file,
-    query_netcdf_output_file
+    query_netcdf_output_file,
+    create_plotly_chart_from_query_result
 )
 
 NRDS_API_TOKEN = os.getenv("NRDS_API_TOKEN", "be5f936afa81436a43a116546f8c8f1ad2a86079")
@@ -41,9 +42,7 @@ def _get_json_raw(endpoint_key: str, params: Optional[Dict[str, Any]] = None, **
         return list_available_vpus(model=p["model"], date=p["date"], forecast=p["forecast"], cycle=p["cycle"])
 
     if endpoint_key == "list_available_outputs_files":
-        return list_available_outputs_files(
-            model=p["model"], date=p["date"], forecast=p["forecast"], cycle=p["cycle"], vpu=p["vpu"], ensemble=p.get("ensemble")
-        )
+        return list_available_outputs_files(data=p)
 
     if endpoint_key == "get_output_file":
         return get_output_file(
@@ -57,6 +56,17 @@ def _get_json_raw(endpoint_key: str, params: Optional[Dict[str, Any]] = None, **
     if endpoint_key == "query_netcdf_output_file":
         return query_netcdf_output_file(s3_url=p["s3_url"], query=p["query"])
 
+
+    if endpoint_key == "create_plotly_chart_from_query_result":
+        return create_plotly_chart_from_query_result(
+            query_result=p["query_result"],
+            chart_type=p.get("chart_type", "line"),
+            x=p.get("x"),
+            y=p.get("y"),
+            color=p.get("color"),
+            title=p.get("title"),
+            max_points=p.get("max_points"),
+        )
     raise KeyError(f"Unknown endpoint_key: {endpoint_key}")
 
 

@@ -13,6 +13,7 @@ from .client_utils import (
     file_kind,
     extract_inline_tool_calls,
     _normalize_query_tool_args,
+    _normalize_plotly_chart_tool_args,
     generate_auto_fix_tool_msg,
     generate_file_msg,
     _rewrite_from_to_output,
@@ -26,7 +27,7 @@ from .client_utils import (
     _bump_failed_signature_counts
 )
 from .context import _print_context_usage, _compact_tool_result_for_context
-from .messages import SYSTEM_MSG
+from .messages_chat import SYSTEM_MSG
 
 from .logger import LOGGER
 from tethysapp.tethysdash.exceptions import VisualizationError
@@ -108,6 +109,11 @@ class NRDSChat(base.DataSource):
             tools_list = await mcp.list_tools()
             ollama_tools = []
             for tool in tools_list:
+                tool_name = (tool.name or "").lower()
+                tool_desc = (tool.description or "").lower()
+                if "plotly" in tool_name or "plotly" in tool_desc:
+                    continue
+
                 schema = tool.inputSchema
                 if hasattr(schema, "model_dump"):
                     schema = schema.model_dump()
@@ -239,6 +245,7 @@ class NRDSChat(base.DataSource):
         had_error = False
         last_err = None
         failed_signatures: list[str] = []
+        last_query_result_payload: Dict[str, Any] | None = None
 
         for tool_call in tool_calls:
             tool_name = tool_call["function"]["name"]
@@ -251,6 +258,12 @@ class NRDSChat(base.DataSource):
                     args = {"_raw": args}
 
             args = _normalize_query_tool_args(tool_name, args)
+            if tool_name == "create_plotly_chart_from_query_result":
+                args = _normalize_plotly_chart_tool_args(
+                    args,
+                    messages,
+                    fallback_query_result=last_query_result_payload,
+                )
 
             s3_url = args.get("s3_url")
             if isinstance(s3_url, str):
@@ -287,6 +300,9 @@ class NRDSChat(base.DataSource):
             )
 
             tool_result = await self.execute_tool(tool_name, args)
+            if tool_name in {"query_parquet_output_file", "query_netcdf_output_file"}:
+                if isinstance(tool_result, dict):
+                    last_query_result_payload = tool_result
             tool_result_for_context = _compact_tool_result_for_context(tool_result)
 
             messages.append(
