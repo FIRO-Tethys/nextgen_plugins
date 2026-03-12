@@ -302,6 +302,14 @@ async function processToolCalls(toolCalls, messages, mcpClient, state) {
     ) {
       state.lastChartResult = toolResult;
     }
+    if (
+      ["list_available_dates", "list_available_models", "list_available_forecasts", "list_available_cycles", "list_available_vpus"].includes(toolName) &&
+      toolResult &&
+      typeof toolResult === "object" &&
+      !toolErrorText(toolResult)
+    ) {
+      state.lastListResult = toolResult;
+    }
 
     // if needed you can compact the result
     messages.push({
@@ -335,6 +343,7 @@ export async function runChatSession({
 
   const state = {
     lastChartResult: null,
+    lastListResult: null,
   };
   const ollamaClient = new Ollama({ host: ollamaHost });
   const messages = [buildSystemMessage()];
@@ -422,7 +431,12 @@ export async function runChatSession({
           messages,
         };
       }
-
+      if (!hadError && state.lastListResult) {
+        return {
+          assistantText: JSON.stringify(state.lastListResult),
+          messages,
+        };
+      }
       if (hadError && lastErr) {
         let repeatedSignature = bumpFailedSignatureCounts(failedSigCounts, failedSignatures);
 

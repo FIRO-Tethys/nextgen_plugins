@@ -1,0 +1,61 @@
+.thinking-switch {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.6rem;
+  cursor: pointer;
+  user-select: none;
+}
+
+.thinking-switch input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  border: 0;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+.thinking-switch-track {
+  position: relative;
+  width: 44px;
+  height: 24px;
+  border-radius: 999px;
+  background: #b9cbd8;
+  transition: background-color 0.2s ease;
+}
+
+.thinking-switch-thumb {
+  position: absolute;
+  top: 3px;
+  left: 3px;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: #ffffff;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.2);
+  transition: transform 0.2s ease;
+}
+
+.thinking-switch input:checked + .thinking-switch-track {
+  background: #2d7fb2;
+}
+
+.thinking-switch input:checked + .thinking-switch-track .thinking-switch-thumb {
+  transform: translateX(20px);
+}
+
+.thinking-switch-label {
+  font-size: 0.9rem;
+  font-weight: 600;
+  color: #345164;
+}
+
+.thinking-switch input:disabled + .thinking-switch-track,
+.thinking-switch input:disabled ~ .thinking-switch-label {
+  opacity: 0.65;
+  cursor: not-allowed;
+}

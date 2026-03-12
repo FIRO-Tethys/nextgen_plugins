@@ -3,18 +3,38 @@ import { useEffect, useState } from "react";
 import { runChatSession } from "./chatboxEngine";
 import MarkdownContent from "./markdownContent";
 import PlotlyChart from "./PlotlyChart";
+import ModelSelector from "./components/ModelSelector";
+import ThinkingSwitch from "./components/ThinkingSwitch";
 import "./chatbox.css";
 
-function ChatBox({ thinkingEnabled = true, model = "qwen3", prompt = "" }) {
+function ChatBox({ thinkingEnabled = true, model = "qwen3", modelOptions = [model], prompt = "" }) {
   const [messages, setMessages] = useState([]);
   const [input, setInput] = useState(prompt);
   const [thinking, setThinking] = useState("");
+  const [selectedModel, setSelectedModel] = useState(model);
+  const [isThinkingEnabled, setIsThinkingEnabled] = useState(Boolean(thinkingEnabled));
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
+  const configuredModels = Array.isArray(modelOptions) && modelOptions.length ? modelOptions : [model];
+  const availableModels = Array.from(new Set([...configuredModels, selectedModel].filter(Boolean)));
 
   useEffect(() => {
     setInput(prompt ?? "");
   }, [prompt]);
+
+  useEffect(() => {
+    setSelectedModel(model);
+  }, [model]);
+
+  useEffect(() => {
+    setIsThinkingEnabled(Boolean(thinkingEnabled));
+  }, [thinkingEnabled]);
+
+  useEffect(() => {
+    if (!isThinkingEnabled) {
+      setThinking("");
+    }
+  }, [isThinkingEnabled]);
 
   const sendMessage = async () => {
     const userText = input.trim();
@@ -31,10 +51,10 @@ function ChatBox({ thinkingEnabled = true, model = "qwen3", prompt = "" }) {
     try {
       const result = await runChatSession({
         prompt: userText,
-        model,
-        thinkingEnabled,
+        model: selectedModel,
+        thinkingEnabled: isThinkingEnabled,
         onThinkingChunk: (chunk) => {
-          if (!thinkingEnabled || !chunk) {
+          if (!isThinkingEnabled || !chunk) {
             return;
           }
           setThinking((prev) => prev + chunk);
@@ -52,6 +72,7 @@ function ChatBox({ thinkingEnabled = true, model = "qwen3", prompt = "" }) {
         },
       ]);
     } catch (err) {
+      console.log("Chat session error:", err);
       setError(String(err?.message ?? err));
     } finally {
       setLoading(false);
@@ -63,9 +84,23 @@ function ChatBox({ thinkingEnabled = true, model = "qwen3", prompt = "" }) {
       <header className="chat-header">
         <h1>NextGen Chatbox</h1>
         <p>
-          model=<code>{model}</code> | thinking=<code>{String(Boolean(thinkingEnabled))}</code>
+          model=<code>{selectedModel}</code> | thinking=<code>{String(Boolean(isThinkingEnabled))}</code>
         </p>
       </header>
+
+      <section className="chat-controls">
+        <ModelSelector
+          value={selectedModel}
+          options={availableModels}
+          onChange={setSelectedModel}
+          disabled={loading}
+        />
+        <ThinkingSwitch
+          checked={isThinkingEnabled}
+          onChange={setIsThinkingEnabled}
+          disabled={loading}
+        />
+      </section>
 
       <section className="chat-log">
         {messages.map((message, index) => {
@@ -94,7 +129,7 @@ function ChatBox({ thinkingEnabled = true, model = "qwen3", prompt = "" }) {
         {loading && <p className="chat-status">Running...</p>}
       </section>
 
-      {thinkingEnabled && thinking && (
+      {isThinkingEnabled && thinking && (
         <section className="thinking-panel">
           <h2>Thinking Stream</h2>
           <pre>{thinking}</pre>
