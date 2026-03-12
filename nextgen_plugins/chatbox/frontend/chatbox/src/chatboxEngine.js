@@ -432,7 +432,7 @@ export async function runChatSession({
         }
 
         for (let attempt = 1; attempt <= MAX_TOOL_REPAIR_ATTEMPTS; attempt += 1) {
-
+          console.log(`Attempting tool call repair ${attempt}/${MAX_TOOL_REPAIR_ATTEMPTS} for signature:`, repeatedSignature);
           messages.push(generateAutoFixToolMsg(lastErr, text, repeatedSignature));
 
           let repairResponse;
