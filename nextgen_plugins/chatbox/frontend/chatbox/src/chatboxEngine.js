@@ -335,8 +335,6 @@ export async function runChatSession({
 
   const state = {
     lastChartResult: null,
-    userFileUrl: userFileUrl ?? null,
-    userFileKind: userFileKind ?? null,
   };
   const ollamaClient = new Ollama({ host: ollamaHost });
   const messages = [buildSystemMessage()];
