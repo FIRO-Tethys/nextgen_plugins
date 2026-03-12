@@ -1,5 +1,3 @@
-import json
-import ast
 import logging
 import os
 from typing import Optional, Dict, Any, List, Literal
@@ -7,7 +5,8 @@ from typing_extensions import Annotated
 from pydantic import Field
 from fastmcp import FastMCP
 from datetime import datetime
-
+from starlette.middleware import Middleware
+from starlette.middleware.cors import CORSMiddleware
 from .utils import (
     _get_json_raw,
     _prefer_id_objects,
@@ -434,7 +433,27 @@ def create_plotly_chart_from_parquet_output_file_tool(
         "title": title,
     })
 
+CORS_MIDDLEWARE = [
+    Middleware(
+        CORSMiddleware,
+        allow_origins=[
+            "http://localhost:8080",
+            "http://127.0.0.1:8080",
+            "http://localhost:8000",
+            "http://127.0.0.1:8000",
+        ],
+        allow_credentials=True,
+        allow_methods=["*"],
+        allow_headers=["*"],
+    )
+]
+
 
 if __name__ == "__main__":
     _configure_runtime_logging()
-    mcp.run(transport="sse", port=9000)
+    mcp.run(
+        transport="sse",
+        host="0.0.0.0",
+        port=9000,
+        middleware=CORS_MIDDLEWARE,
+    )

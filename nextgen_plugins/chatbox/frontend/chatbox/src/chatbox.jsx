@@ -3,6 +3,7 @@ import { useEffect, useState } from "react";
 import { runChatSession } from "./chatboxEngine";
 import MarkdownContent from "./markdownContent";
 import PlotlyChart from "./PlotlyChart";
+import "./chatbox.css";
 
 function ChatBox({ thinkingEnabled = true, model = "qwen3", prompt = "" }) {
   const [messages, setMessages] = useState([]);

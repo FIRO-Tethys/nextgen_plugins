@@ -8,7 +8,7 @@ authors = [{ name = "Aquaveo LLC", email = "gromero@aquaveo.com" }]
 license = { file = "LICENSE" }
 readme = "README.md"
 classifiers = ["License :: OSI Approved :: MIT License"]
-version = "0.0.1"
+version = "0.0.2"
 description = "Intake drivers for the NextGen DataStream Platform"
 requires-python = ">=3.6"
 dependencies = [
@@ -31,6 +31,8 @@ Issues = "https://github.com/FIRO-Tethys/nextgen_plugins/issues"
 [project.entry-points."intake.drivers"]
 nrds_chat_service = "nextgen_plugins.chatbox.chat:NRDSChat"
 nrds_charts_service = "nextgen_plugins.chatbox.nrds:NRDSChart"
+nrds_chat_js_service = "nextgen_plugins.chatbox.chatjs:NRDSChatJS"
+
 [tool.setuptools]
 include-package-data = true
 zip-safe = false
