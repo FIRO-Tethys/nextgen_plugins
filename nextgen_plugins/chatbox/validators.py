@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import re
-from datetime import datetime
+from datetime import date, datetime
 from typing import Literal, Optional
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator, model_validator
@@ -16,7 +16,6 @@ Forecasts = Literal["short_range", "medium_range", "analysis_assim_extend"]
 
 def normalize_date_ymd(s: str) -> str:
     s = (s or "").strip().replace("/", "-")
-    # validate actual date
     datetime.strptime(s, "%Y-%m-%d")
     return s
 
@@ -40,7 +39,6 @@ def normalize_vpu(s: str) -> str:
 
 def normalize_cycle_hour(s: str) -> str:
     raw = (s or "").strip()
-    # Accept "0" -> "00", "6" -> "06", "06" -> "06"
     if raw.isdigit() and len(raw) in (1, 2):
         hh = int(raw)
         if 0 <= hh <= 23:
@@ -49,9 +47,6 @@ def normalize_cycle_hour(s: str) -> str:
 
 
 class OutputsFilesQuery(BaseModel):
-    """
-    Query validation for /api/list-available-outputs-files
-    """
     model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
 
     model: str = Field(min_length=1, description="Model id (e.g., cfe_nom)")
@@ -65,9 +60,13 @@ class OutputsFilesQuery(BaseModel):
         description="Only for medium_range. Defaults to 1 (first member) if omitted.",
     )
 
-    @field_validator("date")
+    @field_validator("date", mode="before")
     @classmethod
-    def _validate_date(cls, v: str) -> str:
+    def _coerce_and_validate_date(cls, v):
+        if isinstance(v, datetime):
+            return v.date().isoformat()
+        if isinstance(v, date):
+            return v.isoformat()
         if not isinstance(v, str) or not DATE_RE.match(v.strip()):
             raise ValueError("date must be YYYY-MM-DD or YYYY/MM/DD")
         return normalize_date_ymd(v)
@@ -88,16 +87,14 @@ class OutputsFilesQuery(BaseModel):
 
     @model_validator(mode="after")
     def _forecast_dependent_rules(self) -> "OutputsFilesQuery":
-        # cycle allowed set depends on forecast
         if self.forecast == "short_range":
-            # already constrained to 00–23 by normalize_cycle_hour
             pass
 
         elif self.forecast == "medium_range":
             if self.cycle not in {"00", "06", "12", "18"}:
                 raise ValueError("For medium_range, cycle must be one of: 00, 06, 12, 18")
             if self.ensemble is None:
-                self.ensemble = 1  # default first member
+                self.ensemble = 1
 
         elif self.forecast == "analysis_assim_extend":
             if self.cycle != "16":
@@ -105,7 +102,6 @@ class OutputsFilesQuery(BaseModel):
             if self.ensemble is not None:
                 raise ValueError("ensemble is not valid for analysis_assim_extend")
 
-        # ensemble only allowed for medium_range
         if self.forecast != "medium_range" and self.ensemble is not None:
             raise ValueError("ensemble is only valid for medium_range")
 

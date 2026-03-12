@@ -1,7 +1,8 @@
+// chatbox.jsx
 import { useEffect, useState } from "react";
 import { runChatSession } from "./chatboxEngine";
-import PlotlyChart from "./PlotlyChart";
 import MarkdownContent from "./markdownContent";
+import PlotlyChart from "./PlotlyChart";
 
 function ChatBox({ thinkingEnabled = true, model = "qwen3", prompt = "" }) {
   const [messages, setMessages] = useState([]);
@@ -38,13 +39,15 @@ function ChatBox({ thinkingEnabled = true, model = "qwen3", prompt = "" }) {
           setThinking((prev) => prev + chunk);
         },
       });
+
       console.log("Chat session completed with result:", result);
+
       setMessages((prev) => [
         ...prev,
         {
           role: "assistant",
           content: result.assistantText || "",
-          figure: result.plotlyFigure ?? null,
+          plotlyFigure: result.plotlyFigure ?? null,
         },
       ]);
     } catch (err) {
@@ -64,17 +67,29 @@ function ChatBox({ thinkingEnabled = true, model = "qwen3", prompt = "" }) {
       </header>
 
       <section className="chat-log">
-        {messages.map((message, index) => (
-          <article
-            key={`${message.role}-${index}`}
-            className={`chat-bubble ${message.role === "user" ? "chat-user" : "chat-assistant"}`}
-          >
-            <strong>{message.role === "user" ? "You" : "Assistant"}</strong>
-            {message.content ? <MarkdownContent content={message.content} /> : null}
+        {messages.map((message, index) => {
 
-            {message.figure ? <PlotlyChart figure={message.figure} /> : null}
-          </article>
-        ))}
+          return (
+            <article
+              key={`${message.role}-${index}`}
+              className={`chat-bubble ${message.role === "user" ? "chat-user" : "chat-assistant"}`}
+            >
+              <strong>{message.role === "user" ? "You" : "Assistant"}</strong>
+
+              {message.plotlyFigure ? (
+                <div
+                  className="chat-plot-wrapper"
+                  style={{ width: "100%", minHeight: "360px", marginTop: "12px" }}
+                >
+                  <PlotlyChart figure={message.plotlyFigure} />
+                </div>
+              ) : message.content ? (
+                <MarkdownContent content={message.content} />
+              ) : null}
+            </article>
+          );
+        })}
+
         {loading && <p className="chat-status">Running...</p>}
       </section>
 

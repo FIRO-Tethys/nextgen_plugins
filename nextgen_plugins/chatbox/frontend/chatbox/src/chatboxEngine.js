@@ -1,9 +1,9 @@
+// chatboxEngine.js
 import { Client as MCPClient } from "@modelcontextprotocol/sdk/client";
 import { SSEClientTransport } from "@modelcontextprotocol/sdk/client/sse";
 import { Ollama } from "ollama/browser";
 import {
   bumpFailedSignatureCounts,
-  compactToolResultForContext,
   extractFileUrl,
   extractInlineToolCalls,
   fileKind,
@@ -11,15 +11,12 @@ import {
   generateFileMsg,
   getMessage,
   isPlausibleOutputsFile,
-  // lastToolPlotlyFigure,
   lastToolFileUrl,
-  maybeJoinDirAndFilename,
-  // normalizePlotlyChartToolArgs,
   normalizeQueryToolArgs,
-  // printContextUsage,
   rewriteFromToOutput,
   toolCallSignature,
   toolErrorText,
+  maybeParseJson,
 } from "./chatboxHelpers";
 import { buildSystemMessage } from "./chatboxMessages";
 
@@ -123,16 +120,16 @@ async function executeTool(toolName, args, mcpClient) {
     const result = await mcpClient.callTool({
       name: toolName,
       arguments: omitEmptyArgs(args),
-      raiseOnError: false, // if supported by your JS MCP client
+      raiseOnError: false,
     });
 
     const data = result?.data;
     if (data !== undefined && data !== null) {
-      return data;
+      return maybeParseJson(data);
     }
 
     try {
-      return result?.content?.[0]?.text ?? result;
+      return maybeParseJson(result?.content?.[0]?.text ?? result);
     } catch {
       return result;
     }
@@ -233,15 +230,24 @@ async function chatWithOptionalThinkingStream({
     delete mergedMessage.tool_calls;
   }
   merged.message = mergedMessage;
+
+  console.log("Merged assistant message:", {
+    role: mergedMessage.role,
+    hasToolCalls: Array.isArray(mergedMessage.tool_calls) && mergedMessage.tool_calls.length > 0,
+    toolCalls: mergedMessage.tool_calls,
+    contentPreview: mergedMessage.content.slice(0, 300),
+    thinkingPreview: mergedMessage.thinking.slice(-800),
+  });
+
   return merged;
 }
 
-async function processToolCalls(toolCalls, messages, mcpClient) {
+async function processToolCalls(toolCalls, messages, mcpClient, state) {
   let hadError = false;
   let lastErr = null;
+  
   const failedSignatures = [];
-  let lastQueryResultPayload = null;
-
+  
   for (const toolCall of toolCalls) {
     let toolName = toolCall?.function?.name;
     let args = toolCall?.function?.arguments ?? {};
@@ -255,68 +261,56 @@ async function processToolCalls(toolCalls, messages, mcpClient) {
     }
 
     args = normalizeQueryToolArgs(toolName, args);
-    // if (toolName === "create_plotly_chart_from_query_result") {
-    //   args = normalizePlotlyChartToolArgs(args, messages, lastQueryResultPayload);
-    // }
 
-    const s3Url = typeof args?.s3_url === "string" ? args.s3_url : null;
-    if (s3Url && s3Url.toLowerCase().endsWith(".parquet") && toolName === "query_netcdf_output_file") {
-      toolName = "query_parquet_output_file";
-    }
-    if (
-      s3Url &&
-      (s3Url.toLowerCase().endsWith(".nc") || s3Url.toLowerCase().endsWith(".nc4")) &&
-      toolName === "query_parquet_output_file"
-    ) {
-      toolName = "query_netcdf_output_file";
-    }
-
-    if (toolName === "query_parquet_output_file" || toolName === "query_netcdf_output_file") {
+    if (toolName === "query_parquet_output_file" || toolName === "query_netcdf_output_file" || toolName === "create_plotly_chart_from_parquet_output_file") {
       const currentS3 = typeof args?.s3_url === "string" ? args.s3_url : "";
       if (!isPlausibleOutputsFile(currentS3)) {
         const fallback =
-          toolName === "query_parquet_output_file"
+          toolName === "query_parquet_output_file" || 
+          toolName === "create_plotly_chart_from_parquet_output_file"
             ? lastToolFileUrl(messages, [".parquet"])
             : lastToolFileUrl(messages, [".nc", ".nc4"]);
         if (fallback) {
           args.s3_url = fallback;
         }
       }
-    }
-
-    if (toolName === "query_parquet_output_file" || toolName === "query_netcdf_output_file") {
       if (typeof args?.query === "string") {
         args.query = rewriteFromToOutput(args.query);
       }
-    }
 
-    if (toolName === "query_parquet_output_file") {
-      if (typeof args?.s3_url === "string" && typeof args?.query === "string") {
-        args.s3_url = maybeJoinDirAndFilename(args.s3_url, args.query);
-        args.query = rewriteFromToOutput(args.query);
-      }
     }
 
     const signatureArgs = args && typeof args === "object" ? args : { _raw: args };
     const callSignature = toolCallSignature(toolName, signatureArgs);
 
     const toolResult = await executeTool(toolName, args, mcpClient);
+    console.log("Tool result type:", {
+      toolName,
+      type: typeof toolResult,
+      isArray: Array.isArray(toolResult),
+      keys: toolResult && typeof toolResult === "object" ? Object.keys(toolResult) : null,
+      preview:
+        typeof toolResult === "string"
+          ? toolResult.slice(0, 200)
+          : JSON.stringify(toolResult)?.slice(0, 200),
+    });
     if (
-      (toolName === "query_parquet_output_file" || toolName === "query_netcdf_output_file") &&
+      toolName === "create_plotly_chart_from_parquet_output_file" &&
       toolResult &&
       typeof toolResult === "object" &&
-      !Array.isArray(toolResult)
+      !toolErrorText(toolResult)
     ) {
-      lastQueryResultPayload = toolResult;
+      state.lastChartResult = toolResult;
     }
-    const compactResult = compactToolResultForContext(toolResult);
+
+    // if needed you can compact the result
     messages.push({
       role: "tool",
       tool_name: toolName,
       content:
-        compactResult && typeof compactResult === "object"
-          ? JSON.stringify(compactResult)
-          : String(compactResult),
+        toolResult && typeof toolResult === "object"
+          ? JSON.stringify(toolResult)
+          : String(toolResult ?? ""),
     });
 
     const errText = toolErrorText(toolResult);
@@ -338,6 +332,12 @@ export async function runChatSession({
   ollamaHost = DEFAULT_OLLAMA_HOST,
   mcpServerUrl = DEFAULT_MCP_SERVER_URL,
 }) {
+
+  const state = {
+    lastChartResult: null,
+    userFileUrl: userFileUrl ?? null,
+    userFileKind: userFileKind ?? null,
+  };
   const ollamaClient = new Ollama({ host: ollamaHost });
   const messages = [buildSystemMessage()];
 
@@ -346,7 +346,15 @@ export async function runChatSession({
   const mcpConnection = await createMcpConnection(mcpServerUrl);
   const mcpClient = mcpConnection.client;
   const tools = await loadTools(mcpClient);
+  console.log(
+    "Tool names sent to Ollama:",
+    (tools ?? []).map((t) => t?.function?.name)
+  );
 
+  const plotlyTool = (tools ?? []).find(
+    (t) => t?.function?.name === "create_plotly_chart_from_parquet_output_file"
+  );
+  console.log("Plotly tool schema sent to Ollama:", plotlyTool);
   try {
     messages.push({ role: "user", content: text });
 
@@ -359,6 +367,13 @@ export async function runChatSession({
     const failedSigCounts = {};
 
     while (true) {
+      console.log("About to call Ollama with messages summary:", messages.slice(-4).map((m) => ({
+        role: m.role,
+        tool_name: m.tool_name,
+        contentPreview:
+          typeof m.content === "string" ? m.content.slice(0, 300) : JSON.stringify(m.content)?.slice(0, 300),
+      })));
+      console.log("Total messages:", messages.length);
       const response = await chatWithOptionalThinkingStream({
         messages,
         tools,
@@ -368,20 +383,30 @@ export async function runChatSession({
         ollamaClient,
       });
 
-      // await printContextUsage(response, model, ollamaHost, ollamaClient);
-
+      // print context if needed await printContextUsage(response, model, ollamaHost, ollamaClient);
+      console.log("Received response from Ollama:", response);
       const message = getMessage(response);
       let toolCalls = Array.isArray(message.tool_calls) ? message.tool_calls : [];
       if (!toolCalls.length) {
         const assistantContent = typeof message.content === "string" ? message.content : "";
+        // if (JSON.parse(assistantContent)) {
+        //   message.content = JSON.parse(assistantContent);
+        // }
         toolCalls = extractInlineToolCalls(assistantContent);
       }
 
       if (!toolCalls.length) {
         const assistantText = typeof message.content === "string" ? message.content : "";
+        const thinkingText = typeof message.thinking === "string" ? message.thinking : "";
+
+        console.log("No tool calls found. Returning final assistant text.", {
+          assistantTextPreview: assistantText.slice(0, 300),
+          thinkingPreview: thinkingText.slice(-1000),
+          extractedInlineCalls: extractInlineToolCalls(assistantText),
+        });
+
         messages.push({ role: "assistant", content: assistantText });
         return { assistantText, messages };
-        // return { assistantText, messages, plotlyFigure: lastToolPlotlyFigure(messages) };
       }
 
       if (!Object.prototype.hasOwnProperty.call(message, "tool_calls")) {
@@ -389,7 +414,16 @@ export async function runChatSession({
       }
       messages.push(message);
 
-      let { hadError, lastErr, failedSignatures } = await processToolCalls(toolCalls, messages, mcpClient);
+      let { hadError, lastErr, failedSignatures } = await processToolCalls(toolCalls, messages, mcpClient, state);
+
+      if (!hadError && state.lastChartResult) {
+        console.log("Returning Plotly chart result from state:", state.lastChartResult);
+        return {
+          assistantText: "",
+          plotlyFigure: state.lastChartResult.figure ?? state.lastChartResult,
+          messages,
+        };
+      }
 
       if (hadError && lastErr) {
         let repeatedSignature = bumpFailedSignatureCounts(failedSigCounts, failedSignatures);
@@ -400,6 +434,7 @@ export async function runChatSession({
         }
 
         for (let attempt = 1; attempt <= MAX_TOOL_REPAIR_ATTEMPTS; attempt += 1) {
+
           messages.push(generateAutoFixToolMsg(lastErr, text, repeatedSignature));
 
           let repairResponse;
@@ -412,7 +447,7 @@ export async function runChatSession({
               onThinkingChunk,
               ollamaClient,
             });
-            await printContextUsage(repairResponse, model, ollamaHost, ollamaClient);
+            // await printContextUsage(repairResponse, model, ollamaHost, ollamaClient);
           } catch (error) {
             lastErr = `Ollama error during repair attempt ${attempt}: ${String(error?.message ?? error)}`;
             continue;
@@ -433,7 +468,7 @@ export async function runChatSession({
           }
           messages.push(repairMessage);
 
-          ({ hadError, lastErr, failedSignatures } = await processToolCalls(repairCalls, messages, mcpClient));
+          ({ hadError, lastErr, failedSignatures } = await processToolCalls(repairCalls, messages, mcpClient, state));
           repeatedSignature = bumpFailedSignatureCounts(failedSigCounts, failedSignatures);
           if (!hadError) {
             break;

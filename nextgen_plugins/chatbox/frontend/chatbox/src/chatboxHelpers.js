@@ -1,4 +1,4 @@
-// import { Ollama } from "ollama/browser";
+// chatboxHelpers.js
 import { AUTO_FIX_SYSTEM_MSG, FILE_MSG } from "./chatboxMessages";
 
 const URL_RE = /(https?:\/\/\S+|s3:\/\/\S+)/i;
@@ -13,7 +13,29 @@ const TOOL_ERROR_TOKENS = [
   "server error",
   "failed",
 ];
+export function maybeParseJson(value) {
+  if (typeof value !== "string") {
+    return value;
+  }
 
+  const trimmed = value.trim();
+  if (!trimmed) {
+    return value;
+  }
+
+  if (
+    (trimmed.startsWith("{") && trimmed.endsWith("}")) ||
+    (trimmed.startsWith("[") && trimmed.endsWith("]"))
+  ) {
+    try {
+      return JSON.parse(trimmed);
+    } catch {
+      return value;
+    }
+  }
+
+  return value;
+}
 function sortObject(value) {
   if (Array.isArray(value)) {
     return value.map(sortObject);
@@ -174,22 +196,6 @@ export function lastToolFileUrl(messages, exts = [".parquet", ".nc", ".nc4"]) {
   return null;
 }
 
-export function maybeJoinDirAndFilename(s3Url, query) {
-  if (typeof s3Url !== "string" || typeof query !== "string") {
-    return s3Url;
-  }
-  if (s3Url.toLowerCase().endsWith(".parquet")) {
-    return s3Url;
-  }
-  if (!s3Url.endsWith("/")) {
-    return s3Url;
-  }
-  const match = query.match(PARQUET_NAME_RE);
-  if (!match) {
-    return s3Url;
-  }
-  return `${s3Url.replace(/\/+$/, "")}/${match[1]}`;
-}
 
 export function rewriteFromToOutput(query) {
   if (typeof query !== "string" || !query.trim()) {
@@ -270,6 +276,7 @@ export function extractInlineToolCalls(text) {
 
     const name = obj.name ?? obj.tool ?? obj.tool_name;
     const args = obj.parameters ?? obj.arguments ?? obj.params ?? obj.args;
+  
 
     if (
       typeof name === "string" &&
@@ -288,8 +295,7 @@ export function normalizeQueryToolArgs(toolName, args) {
     return args;
   }
 
-  const queryTools = new Set(["query_parquet_output_file", "query_netcdf_output_file"]);
- 
+  const queryTools = new Set(["query_parquet_output_file", "query_netcdf_output_file", "create_plotly_chart_from_parquet_output_file"]);
   if (queryTools.has(toolName)) {
     const normalized = { ...args };
     const s3Url = normalized.s3_url;
@@ -351,20 +357,13 @@ export function generateAutoFixToolMsg(lastErr, priorUserText = "", repeatedSign
   };
 }
 
-export function generateFileMsg(fileUrl, fileType) {
-  let mcpToolCommand = "Detected file URL, but could not determine file type. Please check the URL and try again.\n";
-  if (fileType === "netcdf") {
-    mcpToolCommand = "Call query_netcdf_output_file with args exactly:\n";
-  } else if (fileType === "parquet") {
-    mcpToolCommand = "Call query_parquet_output_file with args exactly:\n";
-  }
 
+export function generateFileMsg(fileUrl, fileType) {
   return {
-    role: "user",
-    content: `Detected file URL: ${fileUrl} (${fileType}).\n${mcpToolCommand}${FILE_MSG}`,
+    role: "assistant",
+    content: `Context: detected file URL ${fileUrl} (${fileType}). Use this exact file URL if a file-based tool call is needed.`,
   };
 }
-
 export function getMessage(resp) {
   if (!resp || typeof resp !== "object") {
     return {};

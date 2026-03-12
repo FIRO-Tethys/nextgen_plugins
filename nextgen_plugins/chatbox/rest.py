@@ -311,80 +311,63 @@ def query_parquet_output_file(s3_url, query) -> Dict:
         logger.error(f"Error querying Parquet file: {e}")
         return {"file": file_url, "query": query, "error": str(e)}
 
-def create_plotly_chart_from_query_result(
-    query_result,
-    chart_type: str = "line",
-    x: Optional[List[str]] = None,
-    y: Optional[List[str]] = None,
-    color: Optional[str] = None,
-    title: Optional[str] = None,
-    max_points: Optional[int] = None,
-) -> Dict[str, Any]:
-    x = x or []
-    y = y or []
+def create_plotly_chart_from_parquet_output_file(s3_url, query, title: str) -> Dict:
+    """Run a query against an output file on S3 and return a Plotly chart JSON based on the results."""
+    logger.info(f"Received request to create Plotly chart from file: {s3_url} with query: {query}")
+    file_url = s3_url
+    logger.info(f"Received query request for file: {file_url} with query: {query}")
+    if file_url.startswith("s3://ciroh-community-ngen-datastream"):
+        file_url = file_url.replace("s3://ciroh-community-ngen-datastream", "https://ciroh-community-ngen-datastream.s3.us-east-1.amazonaws.com")
 
-    logger.info(
-        f"Creating Plotly chart from query result with chart_type={chart_type}, "
-        f"x={x}, y={y}, color={color}, title={title}, max_points={max_points}"
-    )
-    logger.info(f"Full query_result payload: {query_result}")
-    logger.info(f"Type of query_result: {type(query_result)}")
+    if not file_url:
+        logger.error("Missing required query param: s3_url")
+        return {"error": "Missing required query param: s3_url"}
+    if not query:
+        logger.error("Missing required query param: query")
+        return {"error": "Missing required query param: query"}
 
-    payload = _parse_query_result_payload(query_result)
+    try:
+        df = _duckdb_query_parquet(file_url, query)
 
-    if payload.get("error"):
-        raise ValueError(f"Cannot chart errored query result: {payload.get('error')}")
-
-    rows = payload.get("data") or []
-    if not isinstance(rows, list):
-        raise ValueError("query_result.data must be a list.")
-
-    if not rows:
+        # Make timestamps JSON-friendly
+        if "time" in df.columns:
+            df["time"] = pd.to_datetime(df["time"], errors="coerce").dt.strftime("%Y-%m-%dT%H:%M:%S.%fZ")
+        logger.info(f"Chart returned {len(df)} rows and columns: {df.columns.tolist()}")
+        fig = _create_plotly_chart(
+            df=df,
+            title=title,
+        )
         return {
-            "data": [],
-            "layout": {
-                "title": {"text": title or "No data to plot"},
-                "template": "plotly_white",
-            },
-        }
+                "figure": fig,
+            }
+        
+    except FileNotFoundError:
+        logger.error(f"File not found: {file_url}")
+        return {"file": file_url, "query": query, "columns": [], "rows": 0, "data": []}
+    except Exception as e:
+        logger.error(f"Error querying Parquet file: {e}")
+        return {"file": file_url, "query": query, "error": str(e)}
 
-    df = pd.DataFrame(rows)
 
-    if max_points is not None:
-        df = df.head(max_points)
-
-    if "time" in df.columns:
-        df["time"] = pd.to_datetime(df["time"], utc=True, errors="coerce")
-
-    # plotly express expects scalar x/y for single-column plotting
-    x_arg = x[0] if isinstance(x, list) and len(x) == 1 else x
-    y_arg = y[0] if isinstance(y, list) and len(y) == 1 else y
-
-    if not x_arg:
-        x_arg = "time" if "time" in df.columns else df.columns[0]
-
-    if not y_arg:
-        numeric_cols = [c for c in df.columns if pd.api.types.is_numeric_dtype(df[c])]
-        y_arg = "flow" if "flow" in df.columns else (numeric_cols[0] if numeric_cols else df.columns[-1])
-
-    if chart_type == "bar":
-        fig = px.bar(
-            df,
-            x=x_arg,
-            y=y_arg,
-            color=color,
-            title=title,
-        )
-    else:
-        fig = px.line(
-            df,
-            x=x_arg,
-            y=y_arg,
-            color=color,
-            title=title,
-        )
+def _create_plotly_chart(
+    df: pd.DataFrame,
+    title: str,
+) -> Dict[str, Any]:
+    logger.info(
+        f"Creating Plotly chart from data"
+    )
+    logger.info(f"DataFrame has {len(df)} rows and columns: {df.columns.tolist()}")
+    columns = df.columns.tolist()
+    if len(columns) < 2:
+        logger.error("Not enough columns in query result to create a chart. Need at least 2.")
+        return {"error": "Not enough columns in query result to create a chart. Need at least 2."}
+    x, y = _auto_pick_axes(columns)
+    fig = px.line(
+        df,
+        x=x,
+        y=y,
+        title=title,
+    )
 
     fig.update_layout(template="plotly_white")
-
-    # Return a plain JSON-safe dict for the frontend
     return json.loads(json.dumps(fig.to_plotly_json(), cls=PlotlyJSONEncoder))

@@ -93,26 +93,17 @@ def _coerce_rows_to_records(rows: List[Any], columns: Any) -> Optional[List[Dict
     return None
 
 
-def _auto_pick_axes(columns: List[str], rows: List[Dict[str, Any]], x: Optional[str], y: Optional[str]) -> tuple[str, str]:
+def _auto_pick_axes(columns: List[str]) -> tuple[str, str]:
     if not columns:
         raise ValueError("No columns available to infer x/y axes.")
 
-    picked_x = x if x in columns else ("time" if "time" in columns else columns[0])
-    if y in columns and y != picked_x:
-        return picked_x, y
-
-    for col in columns:
-        if col == picked_x:
-            continue
-        if any(_is_numeric_value(r.get(col)) for r in rows):
-            return picked_x, col
-
-    raise ValueError(
-        "Could not infer a numeric y axis. Provide y=<numeric column name> explicitly."
-    )
-
-
-
+    picked_x = next((col for col in columns if "time" in col.lower()), None)
+    picked_y = next((col for col in columns if col != picked_x and col != "feature_id"), None)
+    if not picked_y:
+        raise ValueError("Could not infer a y-axis column different from x-axis and 'feature_id'.")
+    if not picked_x:
+        raise ValueError("Could not infer an x-axis column.")
+    return (picked_x, picked_y)
 
 
 def _get_troute_df(s3_nc_url: str) -> pd.DataFrame:

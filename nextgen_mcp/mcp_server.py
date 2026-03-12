@@ -171,7 +171,7 @@ def list_available_forecasts_tool(
 ) -> Dict[str, Any]:
     end_date = _parse_date_or_today(date, "date")
     raw = _get_json_raw(
-        "list_available_forecasts", params={"model": model, "date": end_date}
+        "list_available_forecasts", params={"model": model, "date": end_date.isoformat()}
     )
     raw = _prefer_id_objects(raw, "forecasts")
     return raw
@@ -202,7 +202,7 @@ def list_available_cycles_tool(
     end_date = _parse_date_or_today(date, "date")
     raw = _get_json_raw(
         "list_available_cycles",
-        params={"model": model, "date": end_date, "forecast": forecast_id},
+        params={"model": model, "date": end_date.isoformat(), "forecast": forecast_id},
     )
     # cycles are already stable, but normalize to {id,label} anyway
     raw = _prefer_id_objects(raw, "cycles")
@@ -243,7 +243,7 @@ def list_available_vpus_tool(
     end_date = _parse_date_or_today(date, "date")
     raw = _get_json_raw(
         "list_available_vpus",
-        params={"model": model, "date": end_date, "forecast": forecast_id, "cycle": cycle},
+        params={"model": model, "date": end_date.isoformat(), "forecast": forecast_id, "cycle": cycle},
     )
     vpus = raw.get("vpus") 
     return vpus
@@ -286,7 +286,7 @@ def list_available_outputs_files_tool(
     end_date = _parse_date_or_today(date, "date")
     params: Dict[str, Any] = {
         "model": model,
-        "date": end_date,
+        "date": end_date.isoformat(),
         "forecast": _as_id(forecast),
         "cycle": cycle,
         "vpu": _as_id(vpu),
@@ -314,7 +314,7 @@ def resolve_output_file_tool(
     end_date = _parse_date_or_today(date, "date")
     params: Dict[str, Any] = {
         "model": model,
-        "date": end_date,
+        "date": end_date.isoformat(),
         "forecast": _as_id(forecast),
         "cycle": cycle,
         "vpu": _as_id(vpu),
@@ -397,67 +397,42 @@ def query_netcdf_output_file_tool(
 
 
 @mcp.tool(
-    name="create_plotly_chart_from_query_result",
+    name="create_plotly_chart_from_parquet_output_file",
     description=(
-        "Create a Plotly-compatible chart JSON from the output of "
-        "query_parquet_output_file or query_netcdf_output_file. "
-        "Input can be a JSON object or a JSON string containing keys like columns/data."
+        "Create a Plotly-compatible chart JSON from a parquet or netcdf output file in S3. "
+        "Provide ONE parquet or netcdf s3_url and a SQL query that reads from it. "
+        "SQL MUST read FROM output."
     ),
 )
-def create_plotly_chart_from_query_result_tool(
-    query_result: Annotated[
-        Dict[str, Any],
+def create_plotly_chart_from_parquet_output_file_tool(
+    s3_url: Annotated[
+        str,
         Field(
-            description=(
-                "Full result payload returned by query_parquet_output_file or "
-                "query_netcdf_output_file."
-            )
+            description="Full URL to a parquet file (s3://... or https://...)",
+            pattern=r"^(?:https://|s3://).+\.(?:parquet|nc)$",
         ),
     ],
-    chart_type: Annotated[
-        Literal["line", "scatter", "bar"],
-        Field(description="Chart type: line, scatter, or bar."),
-    ] = "line",
-    x: Annotated[
-        Optional[str],
-        Field(description="Column name for x-axis. Defaults to time, otherwise first column."),
-    ] = None,
-    y: Annotated[
-        Optional[str],
-        Field(description="Numeric column name for y-axis. Auto-detected if omitted."),
-    ] = None,
-    color: Annotated[
-        Optional[str],
-        Field(description="Optional categorical column for multi-trace grouping."),
-    ] = None,
+    query: Annotated[
+        str,
+        Field(
+            description="DuckDB SQL query (read-only). Must start with SELECT or WITH. Must read FROM output.",
+            pattern=r"(?is)^\s*(?:WITH\b.*?\bSELECT\b|SELECT\b).*$",
+        ),
+    ],
     title: Annotated[
         Optional[str],
         Field(description="Optional chart title."),
-    ] = None,
-    max_points: Annotated[
-        int,
-        Field(ge=1, le=50000, description="Maximum number of rows to plot."),
-    ] = 5000,
+    ] = None
 ) -> Dict[str, Any]:
     LOGGER.info(
-        "Tool create_plotly_chart_from_query_result called (chart_type=%s, x=%s, y=%s, color=%s, max_points=%s, query_result_type=%s)",
-        chart_type,
-        x,
-        y,
-        color,
-        max_points,
-        type(query_result).__name__,
+        "Tool create_plotly_chart_from_parquet_output_file called (title=%s)",
+        title
     )
-    return _get_json_raw("create_plotly_chart_from_query_result", params={
-        "query_result": query_result,
-        "chart_type": chart_type,
-        "x": x,
-        "y": y,
-        "color": color,
+    return _get_json_raw("create_plotly_chart_from_parquet_output_file", params={
+        "s3_url": s3_url,
+        "query": query,
         "title": title,
-        "max_points": max_points,
-    }) 
-
+    })
 
 
 if __name__ == "__main__":
