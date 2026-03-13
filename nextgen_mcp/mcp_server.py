@@ -433,6 +433,43 @@ def create_plotly_chart_from_parquet_output_file_tool(
         "title": title,
     })
 
+
+@mcp.tool(
+    name="query_hydrofabric_parquet_file",
+    description=(
+        "Lookup rows in the hydrofabric index parquet file in S3 by hydrofabric identifier. "
+        "Provide hydrofabric_id. "
+        "The tool searches columns id and divide_id using exact and substring matching. "
+        "This tool does not accept s3_url or raw SQL."
+    ),
+)
+def query_hydrofabric_parquet_file(
+    hydrofabric_id: Annotated[
+        str,
+        Field(
+            description="Hydrofabric identifier to search for in columns id and divide_id."
+        ),
+    ],
+    limit: Annotated[
+        int,
+        Field(
+            description="Maximum number of matching rows to return.",
+            ge=1,
+            le=200,
+        ),
+    ] = 50,
+) -> Dict[str, Any]:
+    """Lookup hydrofabric rows by id/divide_id."""
+    LOGGER.info(
+        "Received request to query hydrofabric with hydrofabric_id=%s limit=%s",
+        hydrofabric_id,
+        limit,
+    )
+    return _get_json_raw(
+        "query_hydrofabric_parquet_file",
+        params={"hydrofabric_id": hydrofabric_id, "limit": limit},
+    )
+
 @mcp.tool(
     name="build_flowpath_highlight_style",
     description=(

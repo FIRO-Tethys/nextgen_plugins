@@ -12,6 +12,47 @@ DATA_SCHEMA = """(
   nudge FLOAT
 )"""
 
+HYDROFABRIC_DATA_SCHEMA = """(
+  layer VARCHAR,
+  id VARCHAR,
+  lon DOUBLE,
+  lat DOUBLE,
+  toid VARCHAR,
+  vpuid VARCHAR,
+  poi_id BIGINT,
+  type VARCHAR,
+  ds_id VARCHAR,
+  areasqkm DOUBLE,
+  lengthkm DOUBLE,
+  tot_drainage_areasqkm DOUBLE,
+  has_flowline BIGINT,
+  LkArea DOUBLE,
+  LkMxE DOUBLE,
+  WeirC DOUBLE,
+  WeirL BIGINT,
+  OrificeC DOUBLE,
+  OrificeA BIGINT,
+  OrificeE DOUBLE,
+  WeirE DOUBLE,
+  Dam_Length BIGINT,
+  domain VARCHAR,
+  hf_id BIGINT,
+  reservoir_index_AnA BIGINT,
+  reservoir_index_Extended_AnA BIGINT,
+  reservoir_index_GDL_AK VARCHAR,
+  reservoir_index_Medium_Range BIGINT,
+  reservoir_index_Short_Range BIGINT,
+  res_id BIGINT,
+  lake_x DOUBLE,
+  lake_y DOUBLE,
+  mainstem BIGINT,
+  flow_order BIGINT,
+  hydroseq BIGINT,
+  has_divide BIGINT,
+  divide_id VARCHAR
+)"""
+
+
 SYSTEM_MSG = {
     "role": "system",
     "content": (

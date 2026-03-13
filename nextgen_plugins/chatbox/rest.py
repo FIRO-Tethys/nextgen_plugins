@@ -19,7 +19,8 @@ from .utils_rest import (
     _get_troute_df,
     _auto_pick_axes,
     _load_geometry,
-    _lookup_flowpath_view
+    _lookup_flowpath_view,
+    _duckdb_query_hydrofabric_parquet
 )
 
 logger = logging.getLogger(__name__)
@@ -30,6 +31,9 @@ OUTPUTS_DIR = "outputs"
 PREFIX_HYDROFABRIC = "v2.2_hydrofabric"
 NGEN_RUN_PREFIX = "ngen-run/outputs/troute"
  
+HYDROFABRIC_INDEX_URL = (
+    "https://communityhydrofabric.s3.us-east-1.amazonaws.com/map/hydrofabric_index.parquet"
+)
 def _ensure_full_s3_url(path: str) -> str:
     p = str(path or "").strip()
     if p.startswith(("s3://", "https://")):
@@ -372,12 +376,62 @@ def _create_plotly_chart(
     fig.update_layout(template="plotly_white")
     return json.loads(json.dumps(fig.to_plotly_json(), cls=PlotlyJSONEncoder))
 
+
+def query_hydrofabric_parquet_file(hydrofabric_id: str, limit: int = 50) -> Dict:
+    """Run a hydrofabric id lookup against the hydrofabric parquet file on S3."""
+    logger.info(
+        "Received request to query hydrofabric with hydrofabric_id=%s limit=%s",
+        hydrofabric_id,
+        limit,
+    )
+
+    hydrofabric_id = (hydrofabric_id or "").strip()
+    if not hydrofabric_id:
+        return {
+            "file": HYDROFABRIC_INDEX_URL,
+            "hydrofabric_id": hydrofabric_id,
+            "columns": [],
+            "rows": 0,
+            "data": [],
+            "error": "hydrofabric_id is required",
+        }
+
+    try:
+        df = _duckdb_query_hydrofabric_parquet(hydrofabric_id=hydrofabric_id, limit=limit)
+        logger.info(
+            "Hydrofabric query returned %s rows and columns: %s",
+            len(df),
+            df.columns.tolist(),
+        )
+        return {
+            "file": HYDROFABRIC_INDEX_URL,
+            "hydrofabric_id": hydrofabric_id,
+            "columns": list(df.columns),
+            "rows": int(len(df)),
+            "data": df.to_dict(orient="records"),
+        }
+    except FileNotFoundError:
+        logger.error("File not found: %s", HYDROFABRIC_INDEX_URL)
+        return {
+            "file": HYDROFABRIC_INDEX_URL,
+            "hydrofabric_id": hydrofabric_id,
+            "columns": [],
+            "rows": 0,
+            "data": [],
+        }
+    except Exception as e:
+        logger.error("Error querying hydrofabric parquet file: %s", e)
+        return {
+            "file": HYDROFABRIC_INDEX_URL,
+            "hydrofabric_id": hydrofabric_id,
+            "error": str(e),
+        }
+
 FLOWPATHS_PMTILES_URL = "https://communityhydrofabric.s3.us-east-1.amazonaws.com/map/kepler/flowpaths.pmtiles"
 FLOWPATHS_STYLE_URL = "https://communityhydrofabric.s3.us-east-1.amazonaws.com/map/styles/dark-style.json"
 FLOWPATHS_SOURCE_ID = "flowpaths-pmtiles"
 FLOWPATHS_SOURCE_LAYER = "conus_flowpaths"  # assumed source-layer name
 FLOWPATHS_ID_FIELD = "id"
-
 
 def normalize_flowpath_id(feature_id: Optional[str]) -> Optional[str]:
     if feature_id is None:
@@ -391,7 +445,6 @@ def normalize_flowpath_id(feature_id: Optional[str]) -> Optional[str]:
         return f"wb-{raw[3:]}" if raw[:3] != "wb-" else raw
 
     return f"wb-{raw}"
-
 
 def build_flowpath_highlight_payload(
     feature_id: Optional[str] = None,

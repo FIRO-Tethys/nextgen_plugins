@@ -15,6 +15,7 @@ from nextgen_plugins.chatbox.rest import (
     query_parquet_output_file,
     query_netcdf_output_file,
     create_plotly_chart_from_parquet_output_file,
+    query_hydrofabric_parquet_file,
     build_flowpath_highlight_payload
 )
 
@@ -57,7 +58,12 @@ def _get_json_raw(endpoint_key: str, params: Optional[Dict[str, Any]] = None, **
     if endpoint_key == "query_netcdf_output_file":
         return query_netcdf_output_file(s3_url=p["s3_url"], query=p["query"])
 
-
+    if endpoint_key == "query_hydrofabric_parquet_file":
+        return query_hydrofabric_parquet_file(
+            hydrofabric_id=p["hydrofabric_id"],
+            limit=p["limit"]
+        )
+    
     if endpoint_key == "create_plotly_chart_from_parquet_output_file":
         return create_plotly_chart_from_parquet_output_file(
             s3_url=p["s3_url"],

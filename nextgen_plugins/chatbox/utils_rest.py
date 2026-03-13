@@ -172,6 +172,67 @@ def _get_troute_df(s3_nc_url: str) -> pd.DataFrame:
 
     return nc_df
 
+def _duckdb_query_hydrofabric_parquet(hydrofabric_id: str, limit: int = 50) -> pd.DataFrame:
+    """Lookup hydrofabric rows by id/divide_id using exact and substring matching."""
+
+    con = duckdb.connect(database=":memory:")
+    try:
+        try:
+            con.execute("LOAD httpfs")
+        except Exception:
+            con.execute("INSTALL httpfs")
+            con.execute("LOAD httpfs")
+
+        con.execute(
+            f"""
+            CREATE OR REPLACE TEMP VIEW output AS
+            SELECT *
+            FROM read_parquet('{HYDROFABRIC_INDEX_URL}')
+            """
+        )
+
+        sql = """
+        WITH matches AS (
+            SELECT
+                *,
+                CASE
+                    WHEN lower(coalesce(id, '')) = lower(?) THEN 0
+                    WHEN lower(coalesce(divide_id, '')) = lower(?) THEN 1
+                    WHEN lower(coalesce(id, '')) LIKE '%' || lower(?) || '%' THEN 2
+                    WHEN lower(coalesce(divide_id, '')) LIKE '%' || lower(?) || '%' THEN 3
+                    ELSE 4
+                END AS match_rank,
+                CASE
+                    WHEN lower(coalesce(id, '')) = lower(?) THEN 'id'
+                    WHEN lower(coalesce(divide_id, '')) = lower(?) THEN 'divide_id'
+                    WHEN lower(coalesce(id, '')) LIKE '%' || lower(?) || '%' THEN 'id'
+                    WHEN lower(coalesce(divide_id, '')) LIKE '%' || lower(?) || '%' THEN 'divide_id'
+                    ELSE NULL
+                END AS matched_column,
+                CASE
+                    WHEN lower(coalesce(id, '')) = lower(?) THEN 'exact'
+                    WHEN lower(coalesce(divide_id, '')) = lower(?) THEN 'exact'
+                    WHEN lower(coalesce(id, '')) LIKE '%' || lower(?) || '%' THEN 'substring'
+                    WHEN lower(coalesce(divide_id, '')) LIKE '%' || lower(?) || '%' THEN 'substring'
+                    ELSE NULL
+                END AS match_type
+            FROM output
+        )
+        SELECT * EXCLUDE (match_rank)
+        FROM matches
+        WHERE match_rank < 4
+        ORDER BY match_rank, id, divide_id
+        LIMIT ?
+        """
+
+        params = [hydrofabric_id] * 12 + [limit]
+        return con.execute(sql, params).df()
+    finally:
+        try:
+            con.close()
+        except Exception:
+            pass
+
 
 def _duckdb_query_parquet(file_url: str, query: str) -> pd.DataFrame:
     """Execute an arbitrary DuckDB query against a parquet file exposed as temp view `output`."""

@@ -24,6 +24,14 @@ const DEFAULT_OLLAMA_HOST = (import.meta.env.VITE_OLLAMA_HOST ?? "http://localho
 const DEFAULT_MCP_SERVER_URL = (import.meta.env.VITE_MCP_SERVER_URL ?? "/sse").trim();
 const MAX_TOOL_REPAIR_ATTEMPTS = Number.parseInt(import.meta.env.VITE_MCP_TOOL_REPAIR_ATTEMPTS ?? "0", 10);
 
+const OUTPUT_FILE_QUERY_TOOLS = new Set([
+  "query_parquet_output_file",
+  "query_netcdf_output_file",
+  "create_plotly_chart_from_parquet_output_file",
+]);
+
+const HYDROFABRIC_QUERY_TOOL = "query_hydrofabric_parquet_file";
+
 function omitEmptyArgs(args) {
   const cleaned = {};
   for (const [key, value] of Object.entries(args ?? {})) {
@@ -105,14 +113,12 @@ async function loadTools(mcpClient) {
           },
         };
       });
-      console.log("Loaded tools from MCP server:", mappedTools);  
-      return mappedTools
+      console.log("Loaded tools from MCP server:", mappedTools);
+      return mappedTools;
     }
   } catch (error) {
     console.error("Error loading tools from MCP server:", error);
   }
-
-
 }
 
 async function executeTool(toolName, args, mcpClient) {
@@ -245,9 +251,9 @@ async function chatWithOptionalThinkingStream({
 async function processToolCalls(toolCalls, messages, mcpClient, state) {
   let hadError = false;
   let lastErr = null;
-  
+
   const failedSignatures = [];
-  
+
   for (const toolCall of toolCalls) {
     let toolName = toolCall?.function?.name;
     let args = toolCall?.function?.arguments ?? {};
@@ -262,11 +268,11 @@ async function processToolCalls(toolCalls, messages, mcpClient, state) {
 
     args = normalizeQueryToolArgs(toolName, args);
 
-    if (toolName === "query_parquet_output_file" || toolName === "query_netcdf_output_file" || toolName === "create_plotly_chart_from_parquet_output_file") {
+    if (OUTPUT_FILE_QUERY_TOOLS.has(toolName)) {
       const currentS3 = typeof args?.s3_url === "string" ? args.s3_url : "";
       if (!isPlausibleOutputsFile(currentS3)) {
         const fallback =
-          toolName === "query_parquet_output_file" || 
+          toolName === "query_parquet_output_file" ||
           toolName === "create_plotly_chart_from_parquet_output_file"
             ? lastToolFileUrl(messages, [".parquet"])
             : lastToolFileUrl(messages, [".nc", ".nc4"]);
@@ -274,10 +280,10 @@ async function processToolCalls(toolCalls, messages, mcpClient, state) {
           args.s3_url = fallback;
         }
       }
+
       if (typeof args?.query === "string") {
         args.query = rewriteFromToOutput(args.query);
       }
-
     }
 
     const signatureArgs = args && typeof args === "object" ? args : { _raw: args };
@@ -294,6 +300,7 @@ async function processToolCalls(toolCalls, messages, mcpClient, state) {
           ? toolResult.slice(0, 200)
           : JSON.stringify(toolResult)?.slice(0, 200),
     });
+
     if (
       toolName === "create_plotly_chart_from_parquet_output_file" &&
       toolResult &&
@@ -302,6 +309,7 @@ async function processToolCalls(toolCalls, messages, mcpClient, state) {
     ) {
       state.lastChartResult = toolResult;
     }
+
     if (
       ["list_available_dates", "list_available_models", "list_available_forecasts", "list_available_cycles", "list_available_vpus"].includes(toolName) &&
       toolResult &&
@@ -320,7 +328,15 @@ async function processToolCalls(toolCalls, messages, mcpClient, state) {
       state.lastMapResult = toolResult;
     }
 
-    // if needed you can compact the result
+    if (
+      toolName === HYDROFABRIC_QUERY_TOOL &&
+      toolResult &&
+      typeof toolResult === "object" &&
+      !toolErrorText(toolResult)
+    ) {
+      state.lastHydrofabricResult = toolResult;
+    }
+
     messages.push({
       role: "tool",
       tool_name: toolName,
@@ -349,12 +365,13 @@ export async function runChatSession({
   ollamaHost = DEFAULT_OLLAMA_HOST,
   mcpServerUrl = DEFAULT_MCP_SERVER_URL,
 }) {
-
   const state = {
     lastChartResult: null,
     lastListResult: null,
-    lastMapResult: null
+    lastMapResult: null,
+    lastHydrofabricResult: null,
   };
+
   const ollamaClient = new Ollama({ host: ollamaHost });
   const messages = [buildSystemMessage()];
 
@@ -363,6 +380,7 @@ export async function runChatSession({
   const mcpConnection = await createMcpConnection(mcpServerUrl);
   const mcpClient = mcpConnection.client;
   const tools = await loadTools(mcpClient);
+
   console.log(
     "Tool names sent to Ollama:",
     (tools ?? []).map((t) => t?.function?.name)
@@ -372,6 +390,7 @@ export async function runChatSession({
     (t) => t?.function?.name === "create_plotly_chart_from_parquet_output_file"
   );
   console.log("Plotly tool schema sent to Ollama:", plotlyTool);
+
   try {
     messages.push({ role: "user", content: text });
 
@@ -391,6 +410,7 @@ export async function runChatSession({
           typeof m.content === "string" ? m.content.slice(0, 300) : JSON.stringify(m.content)?.slice(0, 300),
       })));
       console.log("Total messages:", messages.length);
+
       const response = await chatWithOptionalThinkingStream({
         messages,
         tools,
@@ -400,15 +420,12 @@ export async function runChatSession({
         ollamaClient,
       });
 
-      // print context if needed await printContextUsage(response, model, ollamaHost, ollamaClient);
       console.log("Received response from Ollama:", response);
       const message = getMessage(response);
       let toolCalls = Array.isArray(message.tool_calls) ? message.tool_calls : [];
+
       if (!toolCalls.length) {
         const assistantContent = typeof message.content === "string" ? message.content : "";
-        // if (JSON.parse(assistantContent)) {
-        //   message.content = JSON.parse(assistantContent);
-        // }
         toolCalls = extractInlineToolCalls(assistantContent);
       }
 
@@ -441,12 +458,14 @@ export async function runChatSession({
           messages,
         };
       }
+
       if (!hadError && state.lastListResult) {
         return {
           assistantText: JSON.stringify(state.lastListResult),
           messages,
         };
       }
+
       if (!hadError && state.lastMapResult) {
         return {
           assistantText: "",
@@ -454,6 +473,14 @@ export async function runChatSession({
           messages,
         };
       }
+
+      if (!hadError && state.lastHydrofabricResult) {
+        return {
+          assistantText: JSON.stringify(state.lastHydrofabricResult),
+          messages,
+        };
+      }
+
       if (hadError && lastErr) {
         let repeatedSignature = bumpFailedSignatureCounts(failedSigCounts, failedSignatures);
 
@@ -476,7 +503,6 @@ export async function runChatSession({
               onThinkingChunk,
               ollamaClient,
             });
-            // await printContextUsage(repairResponse, model, ollamaHost, ollamaClient);
           } catch (error) {
             lastErr = `Ollama error during repair attempt ${attempt}: ${String(error?.message ?? error)}`;
             continue;
@@ -499,6 +525,7 @@ export async function runChatSession({
 
           ({ hadError, lastErr, failedSignatures } = await processToolCalls(repairCalls, messages, mcpClient, state));
           repeatedSignature = bumpFailedSignatureCounts(failedSigCounts, failedSignatures);
+
           if (!hadError && state.lastChartResult) {
             return {
               assistantText: "",
@@ -521,6 +548,14 @@ export async function runChatSession({
               messages,
             };
           }
+
+          if (!hadError && state.lastHydrofabricResult) {
+            return {
+              assistantText: JSON.stringify(state.lastHydrofabricResult),
+              messages,
+            };
+          }
+
           if (!hadError) {
             break;
           }
