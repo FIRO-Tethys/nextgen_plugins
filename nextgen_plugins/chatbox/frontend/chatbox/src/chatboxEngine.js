@@ -311,6 +311,15 @@ async function processToolCalls(toolCalls, messages, mcpClient, state) {
       state.lastListResult = toolResult;
     }
 
+    if (
+      toolName === "build_flowpath_highlight_style" &&
+      toolResult &&
+      typeof toolResult === "object" &&
+      !toolErrorText(toolResult)
+    ) {
+      state.lastMapResult = toolResult;
+    }
+
     // if needed you can compact the result
     messages.push({
       role: "tool",
@@ -344,6 +353,7 @@ export async function runChatSession({
   const state = {
     lastChartResult: null,
     lastListResult: null,
+    lastMapResult: null
   };
   const ollamaClient = new Ollama({ host: ollamaHost });
   const messages = [buildSystemMessage()];
@@ -437,6 +447,13 @@ export async function runChatSession({
           messages,
         };
       }
+      if (!hadError && state.lastMapResult) {
+        return {
+          assistantText: "",
+          mapConfig: state.lastMapResult,
+          messages,
+        };
+      }
       if (hadError && lastErr) {
         let repeatedSignature = bumpFailedSignatureCounts(failedSigCounts, failedSignatures);
 
@@ -482,6 +499,28 @@ export async function runChatSession({
 
           ({ hadError, lastErr, failedSignatures } = await processToolCalls(repairCalls, messages, mcpClient, state));
           repeatedSignature = bumpFailedSignatureCounts(failedSigCounts, failedSignatures);
+          if (!hadError && state.lastChartResult) {
+            return {
+              assistantText: "",
+              plotlyFigure: state.lastChartResult.figure ?? state.lastChartResult,
+              messages,
+            };
+          }
+
+          if (!hadError && state.lastListResult) {
+            return {
+              assistantText: JSON.stringify(state.lastListResult),
+              messages,
+            };
+          }
+
+          if (!hadError && state.lastMapResult) {
+            return {
+              assistantText: "",
+              mapConfig: state.lastMapResult,
+              messages,
+            };
+          }
           if (!hadError) {
             break;
           }

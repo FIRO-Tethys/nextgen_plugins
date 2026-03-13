@@ -3,6 +3,7 @@ import { useEffect, useState } from "react";
 import { runChatSession } from "./chatboxEngine";
 import MarkdownContent from "./markdownContent";
 import PlotlyChart from "./PlotlyChart";
+import FlowpathsPmtilesMap from "./FlowpathsPmtilesMap";
 import ModelSelector from "./components/ModelSelector";
 import ThinkingSwitch from "./components/ThinkingSwitch";
 import "./chatbox.css";
@@ -69,6 +70,7 @@ function ChatBox({ thinkingEnabled = true, model = "qwen3", modelOptions = [mode
           role: "assistant",
           content: result.assistantText || "",
           plotlyFigure: result.plotlyFigure ?? null,
+          mapConfig: result.mapConfig ?? null,
         },
       ]);
     } catch (err) {
@@ -112,7 +114,22 @@ function ChatBox({ thinkingEnabled = true, model = "qwen3", modelOptions = [mode
             >
               <strong>{message.role === "user" ? "You" : "Assistant"}</strong>
 
-              {message.plotlyFigure ? (
+              {message.mapConfig ? (
+                <div
+                  className="chat-map-wrapper"
+                  style={{ width: "100%", minHeight: "500px", marginTop: "12px" }}
+                >
+                <FlowpathsPmtilesMap
+                  featureId={message.mapConfig.feature_id}
+                  bbox={message.mapConfig.bbox}
+                  center={message.mapConfig.center}
+                  zoom={message.mapConfig.zoom}
+                  styleUrl={message.mapConfig.style_url}
+                  pmtilesUrl={message.mapConfig.pmtiles_url}
+                  sourceLayer={message.mapConfig.source_layer}
+                />
+                </div>
+              ) : message.plotlyFigure ? (
                 <div
                   className="chat-plot-wrapper"
                   style={{ width: "100%", minHeight: "360px", marginTop: "12px" }}

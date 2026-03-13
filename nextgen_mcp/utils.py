@@ -14,7 +14,8 @@ from nextgen_plugins.chatbox.rest import (
     get_output_file,
     query_parquet_output_file,
     query_netcdf_output_file,
-    create_plotly_chart_from_parquet_output_file 
+    create_plotly_chart_from_parquet_output_file,
+    build_flowpath_highlight_payload
 )
 
 NRDS_API_TOKEN = os.getenv("NRDS_API_TOKEN", "be5f936afa81436a43a116546f8c8f1ad2a86079")
@@ -62,6 +63,10 @@ def _get_json_raw(endpoint_key: str, params: Optional[Dict[str, Any]] = None, **
             s3_url=p["s3_url"],
             query=p["query"],
             title=p.get("title"),
+        )
+    if endpoint_key == "build_pmtiles_feature_highlight":
+        return build_flowpath_highlight_payload(
+            feature_id=p["feature_id"] 
         )
     raise KeyError(f"Unknown endpoint_key: {endpoint_key}")
 

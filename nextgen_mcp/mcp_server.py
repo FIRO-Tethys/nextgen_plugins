@@ -433,6 +433,24 @@ def create_plotly_chart_from_parquet_output_file_tool(
         "title": title,
     })
 
+@mcp.tool(
+    name="build_flowpath_highlight_style",
+    description=(
+        "Return a simple PMTiles/MapLibre highlight config for the flowpaths PMTiles. "
+        "If a feature id is provided, normalize it and build a filter to highlight that flowpath."
+    ),
+)
+def build_flowpath_highlight_style_tool(
+    feature_id: Annotated[
+        Optional[str],
+        Field(description="Flowpath id. If it does not start with wb-, wb- will be prefixed.")
+    ] = None,
+
+) -> Dict[str, Any]:
+    return _get_json_raw("build_pmtiles_feature_highlight", params={
+        "feature_id": feature_id 
+    })
+
 CORS_MIDDLEWARE = [
     Middleware(
         CORSMiddleware,

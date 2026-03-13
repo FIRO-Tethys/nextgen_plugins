@@ -5,7 +5,61 @@ import ast
 import pandas as pd
 import duckdb
 import xarray as xr
+from shapely import wkb, wkt
+from shapely.geometry import shape
 
+
+HYDROFABRIC_INDEX_URL = (
+    "https://communityhydrofabric.s3.us-east-1.amazonaws.com/map/hydrofabric_index.parquet"
+)
+
+def _load_geometry(value):
+    if value is None:
+        return None
+
+    if isinstance(value, (bytes, bytearray, memoryview)):
+        return wkb.loads(bytes(value))
+
+    if isinstance(value, str):
+        text = value.strip()
+        if not text:
+            return None
+        if text.startswith("{"):
+            return shape(json.loads(text))
+        return wkt.loads(text)
+
+    return value
+
+
+def _lookup_flowpath_view(feature_id: str) -> dict:
+    con = duckdb.connect()
+    con.execute("INSTALL httpfs; LOAD httpfs;")
+
+    row = con.execute(
+        """
+        SELECT *
+        FROM read_parquet(?)
+        WHERE id = ?
+        LIMIT 1
+        """,
+        [HYDROFABRIC_INDEX_URL, feature_id],
+    ).fetchone()
+
+    if not row:
+        return {"bbox": None, "center": None, "zoom": None}
+
+    geom = _load_geometry(row[1])
+    if geom is None:
+        return {"bbox": None, "center": None, "zoom": None}
+
+    minx, miny, maxx, maxy = geom.bounds
+    center = [(minx + maxx) / 2.0, (miny + maxy) / 2.0]
+
+    return {
+        "bbox": [[minx, miny], [maxx, maxy]],
+        "center": center,
+        "zoom": 12,
+    }
 
 def _strip_markdown_code_fence(text: str) -> str:
     s = (text or "").strip()

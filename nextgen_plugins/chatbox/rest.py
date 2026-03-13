@@ -17,9 +17,9 @@ from .utils_rest import (
     _duckdb_query_parquet,
     _duckdb_query_netcdf,
     _get_troute_df,
-    _parse_query_result_payload,
-    _coerce_rows_to_records,
     _auto_pick_axes,
+    _load_geometry,
+    _lookup_flowpath_view
 )
 
 logger = logging.getLogger(__name__)
@@ -371,3 +371,90 @@ def _create_plotly_chart(
 
     fig.update_layout(template="plotly_white")
     return json.loads(json.dumps(fig.to_plotly_json(), cls=PlotlyJSONEncoder))
+
+FLOWPATHS_PMTILES_URL = "https://communityhydrofabric.s3.us-east-1.amazonaws.com/map/kepler/flowpaths.pmtiles"
+FLOWPATHS_STYLE_URL = "https://communityhydrofabric.s3.us-east-1.amazonaws.com/map/styles/dark-style.json"
+FLOWPATHS_SOURCE_ID = "flowpaths-pmtiles"
+FLOWPATHS_SOURCE_LAYER = "conus_flowpaths"  # assumed source-layer name
+FLOWPATHS_ID_FIELD = "id"
+
+
+def normalize_flowpath_id(feature_id: Optional[str]) -> Optional[str]:
+    if feature_id is None:
+        return None
+
+    raw = str(feature_id).strip()
+    if not raw:
+        return None
+
+    if raw.lower().startswith("wb-"):
+        return f"wb-{raw[3:]}" if raw[:3] != "wb-" else raw
+
+    return f"wb-{raw}"
+
+
+def build_flowpath_highlight_payload(
+    feature_id: Optional[str] = None,
+    highlight_color: str = "#ffb703",
+    default_color: str = "#38bdf8",
+) -> Dict[str, Any]:
+    normalized_id = normalize_flowpath_id(feature_id)
+
+    highlight_filter = (
+        ["==", ["get", FLOWPATHS_ID_FIELD], normalized_id]
+        if normalized_id
+        else None
+    )
+
+    tooltip = (
+        {
+            "field": FLOWPATHS_ID_FIELD,
+            "text": f"{FLOWPATHS_ID_FIELD}: {normalized_id}",
+        }
+        if normalized_id
+        else None
+    )
+
+    view = _lookup_flowpath_view(normalized_id) if normalized_id else {
+        "bbox": None,
+        "center": None,
+        "zoom": None,
+    }
+
+    return {
+        "kind": "pmtiles-highlight",
+        "pmtiles_url": FLOWPATHS_PMTILES_URL,
+        "style_url": FLOWPATHS_STYLE_URL,
+        "source_id": FLOWPATHS_SOURCE_ID,
+        "source_layer": FLOWPATHS_SOURCE_LAYER,
+        "id_field": FLOWPATHS_ID_FIELD,
+        "feature_id": normalized_id,
+        "filter": highlight_filter,
+        "bbox": view["bbox"],
+        "center": view["center"],
+        "zoom": view["zoom"],
+        "base_layer": {
+            "id": "flowpaths-base",
+            "type": "line",
+            "source": FLOWPATHS_SOURCE_ID,
+            "source-layer": FLOWPATHS_SOURCE_LAYER,
+            "paint": {
+                "line-color": default_color,
+                "line-width": 1.25,
+                "line-opacity": 0.5,
+            },
+        },
+        "highlight_layer": {
+            "id": "flowpaths-highlight",
+            "type": "line",
+            "source": FLOWPATHS_SOURCE_ID,
+            "source-layer": FLOWPATHS_SOURCE_LAYER,
+            "filter": highlight_filter,
+            "paint": {
+                "line-color": highlight_color,
+                "line-width": 3.5,
+                "line-opacity": 1.0,
+            },
+        },
+        "tooltip": tooltip,
+    }
