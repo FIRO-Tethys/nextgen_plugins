@@ -51,6 +51,26 @@ ollama pull qwen3
 docker compose -f .devcontainer/docker-compose.dev.yml logs -f mcp
 ```
 
+## Frontend Dev
+
+If you want to run the chatbox frontend directly for development:
+
+```bash
+cd nextgen_plugins/chatbox/frontend/chatbox
+```
+
+Run Vite dev mode:
+
+```bash
+npm run dev
+```
+
+Run preview mode to test with TethysDash:
+
+```bash
+npm run serve
+```
+
 ## Plugin Env
 
 Use these values when consuming from `nextgen_plugins`:
