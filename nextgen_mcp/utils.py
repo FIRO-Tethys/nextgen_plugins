@@ -16,7 +16,7 @@ from nextgen_plugins.chatbox.rest import (
     query_netcdf_output_file,
     create_plotly_chart_from_parquet_output_file,
     query_hydrofabric_parquet_file,
-    build_flowpath_highlight_payload
+    build_hydrofabric_feature_map_config
 )
 
 NRDS_API_TOKEN = os.getenv("NRDS_API_TOKEN", "be5f936afa81436a43a116546f8c8f1ad2a86079")
@@ -70,9 +70,9 @@ def _get_json_raw(endpoint_key: str, params: Optional[Dict[str, Any]] = None, **
             query=p["query"],
             title=p.get("title"),
         )
-    if endpoint_key == "build_pmtiles_feature_highlight":
-        return build_flowpath_highlight_payload(
-            feature_id=p["feature_id"] 
+    if endpoint_key == "build_hydrofabric_feature_map_config":
+        return build_hydrofabric_feature_map_config(
+            hydrofabric_id=p["hydrofabric_id"], 
         )
     raise KeyError(f"Unknown endpoint_key: {endpoint_key}")
 

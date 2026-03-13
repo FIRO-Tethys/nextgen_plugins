@@ -320,7 +320,7 @@ async function processToolCalls(toolCalls, messages, mcpClient, state) {
     }
 
     if (
-      toolName === "build_flowpath_highlight_style" &&
+      toolName === "build_hydrofabric_feature_map_config" &&
       toolResult &&
       typeof toolResult === "object" &&
       !toolErrorText(toolResult)

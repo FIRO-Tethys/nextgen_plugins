@@ -471,22 +471,25 @@ def query_hydrofabric_parquet_file(
     )
 
 @mcp.tool(
-    name="build_flowpath_highlight_style",
+    name="build_hydrofabric_feature_map_config",
     description=(
-        "Return a simple PMTiles/MapLibre highlight config for the flowpaths PMTiles. "
-        "If a feature id is provided, normalize it and build a filter to highlight that flowpath."
+        "Build a map configuration for a hydrofabric feature lookup by id. "
+        "Looks up the hydrofabric index parquet file, determines the correct PMTiles layer, "
+        "returns highlight/filter metadata and a fallback camera position. "
+        "Use this when the user wants to show, highlight, zoom to, or locate a hydrofabric feature on a map."
     ),
 )
-def build_flowpath_highlight_style_tool(
-    feature_id: Annotated[
-        Optional[str],
-        Field(description="Flowpath id. If it does not start with wb-, wb- will be prefixed.")
-    ] = None,
-
+def build_hydrofabric_feature_map_config(
+    hydrofabric_id: Annotated[
+        str,
+        Field(description="Hydrofabric identifier to search in columns id and divide_id.")
+    ]
 ) -> Dict[str, Any]:
-    return _get_json_raw("build_pmtiles_feature_highlight", params={
-        "feature_id": feature_id 
-    })
+    LOGGER.info("Received request to build hydrofabric map config for hydrofabric_id=%s", hydrofabric_id)
+    return _get_json_raw(
+        "build_hydrofabric_feature_map_config",
+        params={"hydrofabric_id": hydrofabric_id},
+    )
 
 CORS_MIDDLEWARE = [
     Middleware(

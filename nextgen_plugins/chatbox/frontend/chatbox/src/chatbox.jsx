@@ -119,15 +119,7 @@ function ChatBox({ thinkingEnabled = true, model = "qwen3", modelOptions = [mode
                   className="chat-map-wrapper"
                   style={{ width: "100%", minHeight: "500px", marginTop: "12px" }}
                 >
-                <FlowpathsPmtilesMap
-                  featureId={message.mapConfig.feature_id}
-                  bbox={message.mapConfig.bbox}
-                  center={message.mapConfig.center}
-                  zoom={message.mapConfig.zoom}
-                  styleUrl={message.mapConfig.style_url}
-                  pmtilesUrl={message.mapConfig.pmtiles_url}
-                  sourceLayer={message.mapConfig.source_layer}
-                />
+                <FlowpathsPmtilesMap mapConfig={message.mapConfig} />
                 </div>
               ) : message.plotlyFigure ? (
                 <div
