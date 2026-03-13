@@ -1,0 +1,27 @@
+FROM python:3.12-slim
+
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PIP_NO_CACHE_DIR=1
+
+WORKDIR /workspace
+
+RUN pip install --upgrade pip && \
+    pip install \
+      "numpy<2" \
+      duckdb \
+      fastmcp \
+      fsspec \
+      h5netcdf \
+      ollama \
+      pandas \
+      plotly \
+      pyarrow \
+      pydantic \
+      requests \
+      s3fs \
+      shapely \
+      typing_extensions \
+      xarray
+
+CMD ["python", "-m", "nextgen_mcp.mcp_server"]

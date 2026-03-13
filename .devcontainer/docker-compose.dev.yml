@@ -1,0 +1,30 @@
+services:
+  mcp:
+    container_name: nextgen-mcp
+    build:
+      context: ..
+      dockerfile: .devcontainer/Dockerfile.mcp
+    working_dir: /workspace
+    command: ["python", "-m", "nextgen_mcp.mcp_server"]
+    ports:
+      - "9000:9000"
+    environment:
+      NRDS_LOG_LEVEL: INFO
+      OLLAMA_HOST: http://ollama:11434
+    volumes:
+      - ..:/workspace:cached
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    restart: unless-stopped
+
+  ollama:
+    image: ollama/ollama:latest
+    container_name: nextgen-ollama
+    ports:
+      - "11434:11434"
+    volumes:
+      - ollama-data:/root/.ollama
+    restart: unless-stopped
+
+volumes:
+  ollama-data:
