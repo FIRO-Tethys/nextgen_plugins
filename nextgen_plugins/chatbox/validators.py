@@ -31,7 +31,7 @@ def normalize_vpu(s: str) -> str:
     if m:
         return f"VPU_{int(m.group(1)):02d}"
 
-    raise ValueError("vpu must look like VPU_02, VPU 2, or 2 (1–99)")
+    raise ValueError("vpu must look like VPU_02, VPU 2, or 2 (1-99)")
 
 def normalize_cycle_hour(s: str) -> str:
     raw = (s or "").strip()
@@ -39,7 +39,7 @@ def normalize_cycle_hour(s: str) -> str:
         hh = int(raw)
         if 0 <= hh <= 23:
             return f"{hh:02d}"
-    raise ValueError("cycle must be an hour 00–23 (two digits preferred)")
+    raise ValueError("cycle must be an hour 00-23 (two digits preferred)")
 
 class OutputsFilesQuery(BaseModel):
     model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
@@ -47,7 +47,7 @@ class OutputsFilesQuery(BaseModel):
     model: str = Field(min_length=1, description="Model id (e.g., cfe_nom)")
     date: str = Field(description="Date in YYYY-MM-DD or YYYY/MM/DD")
     forecast: Forecasts = Field(description="Forecast id")
-    cycle: str = Field(description="Cycle hour (00–23). Forecast-specific allowed values.")
+    cycle: str = Field(description="Cycle hour (00-23). Forecast-specific allowed values.")
     vpu: str = Field(description="VPU id (e.g., VPU_02). Also accepts '2' or 'VPU 2'.")
     ensemble: Optional[int] = Field(
         default=None,
