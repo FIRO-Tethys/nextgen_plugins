@@ -271,13 +271,17 @@ def list_available_output_files_tool(
     raw = _get_json_raw("list_available_output_files", params=params)
     return _prefer_id_objects(raw, "files")
 
+
 @mcp.tool(
     name="resolve_output_file",
-    description="Resolve a single output file path for model/date/forecast/cycle/vpu by file_name or index.",
+    description="Resolve a single output file path for model/date/forecast/cycle/vpu. Provide exactly one of file_name or index.",
 )
 def resolve_output_file_tool(
     model: Annotated[MODELS, Field(description="Model id")] = "cfe_nom",
-    date: Annotated[Optional[str], Field(description="YYYY-MM-DD or YYYY/MM/DD", pattern=DATE_PATTERN)] = None,
+    date: Annotated[
+        Optional[str],
+        Field(description="YYYY-MM-DD or YYYY/MM/DD", pattern=DATE_PATTERN),
+    ] = None,
     forecast: Annotated[FORECASTS, Field(description="Forecast id")] = "short_range",
     cycle: Annotated[str, Field(description="Cycle", pattern=r"^(?:[01]\d|2[0-3])$")] = "00",
     vpu: Annotated[
@@ -285,11 +289,23 @@ def resolve_output_file_tool(
         Field(
             description="VPU id or label (e.g. VPU_06, VPU 6, 6, VPU_03W, VPU 3W, 3W)"
         ),
-    ] = "VPU_06",    
-    ensemble: Annotated[Optional[str], Field(description="Ensemble (medium_range)", pattern=r"^\d+$")] = None,
-    file_name: Annotated[Optional[str], Field(description="Exact filename (e.g. troute_output_...parquet)")] = None,
-    index: Annotated[Optional[int], Field(description="0-based index into sorted file list", ge=0)] = None,
+    ] = "VPU_06",
+    ensemble: Annotated[
+        Optional[str],
+        Field(description="Ensemble (medium_range)", pattern=r"^\d+$"),
+    ] = None,
+    file_name: Annotated[
+        Optional[str],
+        Field(description="Exact filename (e.g. troute_output_...parquet)"),
+    ] = None,
+    index: Annotated[
+        Optional[int],
+        Field(description="0-based index into sorted file list", ge=0),
+    ] = None,
 ) -> Dict[str, Any]:
+    if (file_name is None) == (index is None):
+        raise ValueError("Provide exactly one of 'file_name' or 'index'.")
+
     end_date = _parse_date_or_today(date, "date")
     params: Dict[str, Any] = {
         "model": model,
@@ -306,21 +322,6 @@ def resolve_output_file_tool(
         params["index"] = index
 
     return _get_json_raw("get_output_file", params=params)
-
-# @mcp.tool(
-#     name="read_parquet_output_file",
-#     description="Read a parquet output file from S3 given its s3_url. Returns columns and data (as list of lists).",
-# )
-# def read_parquet_output_file_tool(
-#     s3_url: Annotated[
-#         str,
-#         Field(
-#             description="Full URL to the parquet file (s3://... or https://...)", 
-#             pattern=r"^(?:https://|s3://).+\.parquet$",
-#         ),
-#     ],
-# ) -> Dict[str, Any]:
-#     return _get_json_raw("read_parquet_output_file", params={"s3_url": s3_url})
 
 @mcp.tool(
     name="query_parquet_output_file",

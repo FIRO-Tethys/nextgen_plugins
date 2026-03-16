@@ -95,8 +95,16 @@ def list_available_output_files(data) -> Dict:
         return {"path": s3_url, "files": []}
 
 def get_output_file(model, date, forecast, cycle, vpu, file_name=None, index=None, ensemble=None) -> Dict:
-    # build directory like your other endpoints
-    logger.info(f"Received request to get output file with model={model}, date={date}, forecast={forecast}, cycle={cycle}, vpu={vpu}, file_name={file_name}, index={index}, ensemble={ensemble}")
+    logger.info(
+        f"Received request to get output file with model={model}, date={date}, "
+        f"forecast={forecast}, cycle={cycle}, vpu={vpu}, file_name={file_name}, "
+        f"index={index}, ensemble={ensemble}"
+    )
+
+    if (file_name is None) == (index is None):
+        logger.error("Exactly one of file_name or index must be provided.")
+        return {"error": "Provide exactly one of file_name or index"}
+
     date = _normalize_date_folder(date)
     s3_dir = f"s3://{BUCKET}/{OUTPUTS_DIR}/{model}/{PREFIX_HYDROFABRIC}/{date}/{forecast}/{cycle}"
     if forecast == "medium_range":
@@ -108,24 +116,18 @@ def get_output_file(model, date, forecast, cycle, vpu, file_name=None, index=Non
     try:
         fs = fsspec.filesystem("s3", anon=True)
         files = fs.ls(s3_dir, detail=False)
-        
-        files = [f for f in files if f.lower().endswith(".parquet") | f.lower().endswith((".nc"))]
-        
+
+        files = [f for f in files if f.lower().endswith(".parquet") or f.lower().endswith(".nc")]
         files = sorted(files)
 
         items = [{"name": f.split("/")[-1], "path": _ensure_full_s3_url(f)} for f in files]
 
-        if file_name:
+        if file_name is not None:
             sel = next((it for it in items if it["name"] == file_name), None)
             if not sel:
                 logger.error(f"file_name '{file_name}' not found in {s3_dir}")
                 return {"dir": s3_dir, "count": len(items), "error": f"file_name not found: {file_name}"}
         else:
-            # index selection
-            if index is None:
-                logger.error(f"Neither file_name nor index provided to select output file in {s3_dir}")
-                return {"dir": s3_dir, "count": len(items), "error": "Provide file_name or index"}    
-                
             try:
                 idx = int(index)
             except Exception:
@@ -136,6 +138,7 @@ def get_output_file(model, date, forecast, cycle, vpu, file_name=None, index=Non
                 logger.error(f"Index out of range: {index}. Must be between 0 and {len(items)-1}.")
                 return {"dir": s3_dir, "count": len(items), "error": f"index out of range: {idx}"}
             sel = items[idx]
+
         logger.info(f"Selected file for retrieval: {sel['name']} at {sel['path']}")
         return {"dir": s3_dir, "count": len(items), "selected": sel}
 
