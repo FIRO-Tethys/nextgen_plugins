@@ -102,20 +102,50 @@ def _as_id(value: str) -> str:
     
     return s.replace(" ", "_")
 
-def _prefer_id_objects(payload: Dict[str, Any], key: str) -> None | Dict[str, Any]:
+def _prefer_id_objects(payload: Dict[str, Any], key: str) -> Dict[str, Any]:
     """
-    Ensure the payload always includes a list of {id,label} objects under `key`,
-    plus *_ids and *_labels arrays for convenience, even if API returns legacy.
-    """
-    items = payload.get(key)
+    Normalize payload[key] into a list of {id, label} objects and always
+    populate companion *_ids and *_labels arrays.
 
-    if isinstance(items, list) and items and isinstance(items[0], dict) and "id" in items[0]:
-        ids = [x.get("id") for x in items]
-        labels = [x.get("label", x.get("id")) for x in items]
-        payload[f"{key[:-1]}_ids" if key.endswith("s") else f"{key}_ids"] = ids
-        payload[f"{key[:-1]}_labels" if key.endswith("s") else f"{key}_labels"] = labels
-        return payload
-    return None
+    Rules:
+      - list[{"id": ..., "label": ...}] -> preserved
+      - list[{"name": ..., "path": ...}] -> id/label default to name
+      - list[str] -> [{"id": s, "label": s}]
+      - missing/empty/non-list -> empty normalized list
+    """
+    singular = key[:-1] if key.endswith("s") else key
+    ids_key = f"{singular}_ids"
+    labels_key = f"{singular}_labels"
+
+    items = payload.get(key)
+    normalized: list[dict[str, Any]] = []
+
+    if isinstance(items, list):
+        for item in items:
+            if isinstance(item, dict):
+                item_id = item.get("id")
+                if item_id is None:
+                    item_id = item.get("name") or item.get("path")
+
+                if item_id is None:
+                    continue
+
+                label = item.get("label")
+                if label is None:
+                    label = item.get("name") or str(item_id)
+
+                obj = dict(item)
+                obj["id"] = str(item_id)
+                obj["label"] = str(label)
+                normalized.append(obj)
+            else:
+                text = str(item)
+                normalized.append({"id": text, "label": text})
+
+    payload[key] = normalized
+    payload[ids_key] = [x["id"] for x in normalized]
+    payload[labels_key] = [x["label"] for x in normalized]
+    return payload
 
 def _parse_iso_date(s: str) -> date:
     s = s.strip().replace("/", "-")

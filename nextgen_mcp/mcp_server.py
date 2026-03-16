@@ -12,7 +12,6 @@ from .utils import (
     _get_json_raw,
     _prefer_id_objects,
     _as_id,
-    REST_API_HOST,
     _parse_iso_date,
     DEFAULT_TZ,
     DEFAULT_START,
@@ -65,29 +64,10 @@ def _parse_date_or_today(date_str: Optional[str], field_name: str):
     )
     return _validate_date_bounds(d, field_name)
 
-
-@mcp.tool(name="healthcheck", description="Check connectivity to the NRDS REST API host.")
-def healthcheck() -> Dict[str, Any]:
-    raw = _get_json_raw("list_available_models")
-    raw = _prefer_id_objects(raw, "models")
-
-    models = raw.get("models") or []
-    sample_models = [m.get("id") for m in models[:5] if isinstance(m, dict)]
-
-    return {
-        "ok": True,
-        "host": REST_API_HOST,
-        "model_count": len(models),
-        "sample_models": sample_models,
-    }
-
-
 @mcp.tool(name="list_available_models", description="List available NRDS models. It should not have any arguments when called.")
 def list_available_models_tool() -> Dict[str, Any]:
     raw = _get_json_raw("list_available_models")
-    raw = _prefer_id_objects(raw, "models")
-    return raw
-
+    return _prefer_id_objects(raw, "models")
 
 @mcp.tool(
     name="list_available_dates",
@@ -124,7 +104,6 @@ def list_available_dates_tool(
         ),
     ] = None,
 ) -> Dict[str, Any]:
-    # Resolve defaults and validate range
     start_date = _validate_date_bounds(_parse_iso_date(start), "start")
     end_date = _parse_date_or_today(end, "end")
 
@@ -134,26 +113,20 @@ def list_available_dates_tool(
         )
 
     raw = _get_json_raw("list_available_dates", params={"model": model})
+    raw = _prefer_id_objects(raw, "dates")
 
     dates = raw.get("dates") or []
-    if isinstance(dates, list) and dates and isinstance(dates[0], dict):
-        # Filter by date range (inclusive)
-        filtered: list[dict] = []
-        for item in dates:
-            di = _date_from_item(item)
-            if di is None:
-                continue
-            if start_date <= di <= end_date:
-                filtered.append(item)
+    filtered: list[dict[str, Any]] = []
 
-        # Apply pagination after filtering
-        if offset or (limit and limit > 0):
-            raw["dates"] = filtered[offset : (offset + limit) if limit else None]
-        else:
-            raw["dates"] = filtered
+    for item in dates:
+        di = _date_from_item(item)
+        if di is None:
+            continue
+        if start_date <= di <= end_date:
+            filtered.append(item)
 
-    return raw
-
+    raw["dates"] = filtered[offset : (offset + limit) if limit else None] if (offset or limit) else filtered
+    return _prefer_id_objects(raw, "dates")
 
 @mcp.tool(
     name="list_available_forecasts",
@@ -173,9 +146,7 @@ def list_available_forecasts_tool(
     raw = _get_json_raw(
         "list_available_forecasts", params={"model": model, "date": end_date.isoformat()}
     )
-    raw = _prefer_id_objects(raw, "forecasts")
-    return raw
-
+    return _prefer_id_objects(raw, "forecasts")
 
 @mcp.tool(
     name="list_available_cycles",
@@ -204,10 +175,7 @@ def list_available_cycles_tool(
         "list_available_cycles",
         params={"model": model, "date": end_date.isoformat(), "forecast": forecast_id},
     )
-    # cycles are already stable, but normalize to {id,label} anyway
-    raw = _prefer_id_objects(raw, "cycles")
-    return raw
-
+    return _prefer_id_objects(raw, "cycles")
 
 @mcp.tool(
     name="list_available_vpus",
@@ -238,16 +206,14 @@ def list_available_vpus_tool(
             pattern=r"^(?:[01]\d|2[0-3])$",
         ),
     ] = "00",
-) -> List [str]:
+) -> Dict[str, Any]:
     forecast_id = _as_id(forecast)
     end_date = _parse_date_or_today(date, "date")
     raw = _get_json_raw(
         "list_available_vpus",
         params={"model": model, "date": end_date.isoformat(), "forecast": forecast_id, "cycle": cycle},
     )
-    vpus = raw.get("vpus") 
-    return vpus
-
+    return _prefer_id_objects(raw, "vpus")
 
 @mcp.tool(
     name="list_available_outputs_files",
@@ -295,7 +261,7 @@ def list_available_outputs_files_tool(
         params["ensemble"] = int(ensemble)
 
     raw = _get_json_raw("list_available_outputs_files", params=params)
-    return raw
+    return _prefer_id_objects(raw, "files")
 
 @mcp.tool(
     name="resolve_output_file",

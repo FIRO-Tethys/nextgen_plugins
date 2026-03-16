@@ -45,7 +45,7 @@ def _ensure_full_s3_url(path: str) -> str:
     return f"s3://{p.lstrip('/')}"
 
 def list_available_outputs_files(data) -> Dict:
-    """List Outputs for a given model, date, forecast, cycle, and vpu."""
+    """List outputs for a given model, date, forecast, cycle, and vpu."""
     logger.info(f"Received request to list available output files with data: {data}")
     try:
         q = OutputsFilesQuery.model_validate(data)
@@ -55,7 +55,7 @@ def list_available_outputs_files(data) -> Dict:
         return {"errors": [{"msg": str(e)}]}
 
     model = q.model
-    date_folder = _normalize_date_folder(q.date)  # uses normalized YYYY-MM-DD
+    date_folder = _normalize_date_folder(q.date)
     forecast = q.forecast
     cycle = q.cycle
     vpu = q.vpu
@@ -67,17 +67,30 @@ def list_available_outputs_files(data) -> Dict:
         s3_url += f"/{vpu}/{NGEN_RUN_PREFIX}"
 
     try:
-        print(f"🔍 Listing files at {s3_url} ...")
         fs = fsspec.filesystem("s3", anon=True)
         outputs = fs.ls(s3_url, detail=False)
-        file_names = [f.split("/troute/")[-1] for f in outputs]
-        file_paths = [os.path.join(s3_url, f) for f in file_names]
-        files = [{"name": fname, "path": fpath} for fname, fpath in zip(file_names, file_paths)]
+        outputs = sorted(outputs)
+
+        files = []
+        for f in outputs:
+            name = f.split("/troute/")[-1]
+            path = _ensure_full_s3_url(f)
+            files.append(
+                {
+                    "id": name,
+                    "label": name,
+                    "name": name,
+                    "path": path,
+                }
+            )
+
         logger.info(f"Found {len(files)} files at {s3_url}")
-        return {"files": files}
+        return {
+            "path": s3_url,
+            "files": files,
+        }
 
     except FileNotFoundError:
-        # valid request, just no outputs at that path
         logger.info(f"No files found at {s3_url}")
         return {"path": s3_url, "files": []}
 
@@ -137,22 +150,25 @@ def list_available_vpus(model, date, forecast, cycle) -> Dict:
     s3_url = f"s3://{BUCKET}/{OUTPUTS_DIR}/{model}/{PREFIX_HYDROFABRIC}/{date}/{forecast}/{cycle}"
     if forecast == "medium_range":
         s3_url += "/1"
+
     try:
         fs = fsspec.filesystem("s3", anon=True)
         dirs = fs.ls(s3_url, detail=False)
-        vpu_ids = [d.split("/")[-1] for d in dirs]
-        vpu_labels = [_label_from_id(v) for v in vpu_ids]
-        logger.info(f"Found VPUs at {s3_url}: {vpu_labels}")
+
+        vpu_ids = sorted(d.split("/")[-1] for d in dirs)
+        vpus = [{"id": vpu_id, "label": _label_from_id(vpu_id)} for vpu_id in vpu_ids]
+
+        logger.info(f"Found VPUs at {s3_url}: {[v['label'] for v in vpus]}")
         return {
-                "path": s3_url,
-                "vpus": vpu_labels
-            }
+            "path": s3_url,
+            "vpus": vpus,
+        }
     except FileNotFoundError:
         logger.info(f"No VPUs found at {s3_url}")
         return {
-                "path": s3_url,
-                "vpus": [],
-            }
+            "path": s3_url,
+            "vpus": [],
+        }
 
 def list_available_cycles(model, date, forecast) -> Dict:
     """List available cycles for a given model, date, and forecast"""
@@ -206,34 +222,37 @@ def list_available_forecasts(model, date) -> Dict:
             }
 
 def list_available_dates(model) -> Dict:
-    """List available dates for a given model"""
+    """List available dates for a given model."""
     logger.info(f"Listing dates for model={model}")
     s3_url = f"s3://{BUCKET}/{OUTPUTS_DIR}/{model}/{PREFIX_HYDROFABRIC}"
+
     try:
         fs = fsspec.filesystem("s3", anon=True)
         dirs = fs.ls(s3_url, detail=False)
 
         date_ids = [d.split("/")[-1].rstrip("/") for d in dirs]  # e.g. ngen.20260218
-        labels = []
+        dates = []
         for folder in date_ids:
             yyyymmdd = _extract_yyyymmdd_from_date_folder(folder)
             if yyyymmdd:
-                labels.append(datetime.strptime(yyyymmdd, "%Y%m%d").date().isoformat())
+                label = datetime.strptime(yyyymmdd, "%Y%m%d").date().isoformat()
             else:
-                labels.append(folder)
+                label = folder
+            dates.append({"id": folder, "label": label})
 
-        sorted_dates = sorted(labels, reverse=True)
-        logger.info(f"Found dates at {s3_url}: {sorted_dates}")
+        dates = sorted(dates, key=lambda x: x["label"], reverse=True)
+
+        logger.info(f"Found dates at {s3_url}: {[d['label'] for d in dates]}")
         return {
-                "path": s3_url,
-                "dates": sorted_dates,
-            }
+            "path": s3_url,
+            "dates": dates,
+        }
     except FileNotFoundError:
         logger.info(f"No dates found at {s3_url}")
         return {
-                "path": s3_url,
-                "dates": [],
-            }
+            "path": s3_url,
+            "dates": [],
+        }
 
 def list_available_models() -> Dict:
     logger.info(f"Listing available models in bucket={BUCKET} under {OUTPUTS_DIR}")
