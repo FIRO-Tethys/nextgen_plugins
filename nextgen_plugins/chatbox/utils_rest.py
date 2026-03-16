@@ -3,15 +3,24 @@ from datetime import datetime
 from typing import Any, Dict, List, Optional
 import json
 import ast
+import re   
 import pandas as pd
 import duckdb
 import xarray as xr
 from shapely import wkb, wkt
 from shapely.geometry import shape
+import plotly.express as px
+from plotly.utils import PlotlyJSONEncoder
 
 HYDROFABRIC_INDEX_URL = (
     "https://communityhydrofabric.s3.us-east-1.amazonaws.com/map/hydrofabric_index.parquet"
 )
+_OUTPUT_SQL_START_RE = re.compile(r"(?is)^\s*(?:WITH\b.*?\bSELECT\b|SELECT\b)")
+_OUTPUT_SQL_FROM_OUTPUT_RE = re.compile(r"(?is)\bFROM\s+output\b")
+_OUTPUT_SQL_FORBIDDEN_RE = re.compile(
+    r"(?is)\b(?:INSERT|UPDATE|DELETE|DROP|ALTER|CREATE|COPY|ATTACH|DETACH|CALL|PRAGMA|VACUUM|TRUNCATE|MERGE|REPLACE)\b"
+)
+
 HYDROFABRIC_LAYER_CONFIG = {
     "flowpaths": {
         "pmtiles_url": "https://communityhydrofabric.s3.us-east-1.amazonaws.com/map/kepler/flowpaths.pmtiles",
@@ -38,6 +47,79 @@ HYDROFABRIC_LAYER_CONFIG = {
         "default_zoom": 12,
     },
 }
+
+def _create_plotly_chart(
+    df: pd.DataFrame,
+    title: str,
+) -> Dict[str, Any]:
+
+    columns = df.columns.tolist()
+    if len(columns) < 2:
+        return {
+            "error": (
+                "Chart query must return at least two columns, including "
+                "'time' and one metric column such as flow, velocity, depth, or nudge."
+            )
+        }
+
+    if "time" not in columns:
+        return {
+            "error": (
+                "Chart query must return a 'time' column and one metric column "
+                "such as flow, velocity, depth, or nudge."
+            )
+        }
+
+    try:
+        x, y = _auto_pick_axes(columns)
+    except ValueError as e:
+        return {
+            "error": (
+                "Chart query must return a 'time' column and at least one additional "
+                "metric column such as flow, velocity, depth, or nudge."
+            )
+        }
+
+    fig = px.line(
+        df,
+        x=x,
+        y=y,
+        title=title,
+    )
+
+    fig.update_layout(template="plotly_white")
+    return json.loads(json.dumps(fig.to_plotly_json(), cls=PlotlyJSONEncoder))
+
+def validate_output_sql(query: str) -> str:
+    """
+    Validate a DuckDB query for output-file tools.
+
+    Rules:
+      - must be a single statement
+      - must start with SELECT or WITH ... SELECT
+      - must be read-only
+      - must read FROM output
+    """
+    if not isinstance(query, str) or not query.strip():
+        raise ValueError("query is required")
+
+    q = query.strip()
+
+    # Allow one trailing semicolon, but reject multi-statement SQL
+    q_no_trailing = q[:-1].strip() if q.endswith(";") else q
+    if ";" in q_no_trailing:
+        raise ValueError("query must be a single SQL statement")
+
+    if not _OUTPUT_SQL_START_RE.match(q):
+        raise ValueError("query must start with SELECT or WITH")
+
+    if _OUTPUT_SQL_FORBIDDEN_RE.search(q):
+        raise ValueError("query must be read-only")
+
+    if not _OUTPUT_SQL_FROM_OUTPUT_RE.search(q):
+        raise ValueError("query must read FROM output")
+
+    return q
 
 def _normalize_record(row: Dict[str, Any]) -> Dict[str, Any]:
     return {k: (None if pd.isna(v) else v) for k, v in row.items()}

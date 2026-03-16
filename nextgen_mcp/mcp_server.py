@@ -326,23 +326,28 @@ def resolve_output_file_tool(
 @mcp.tool(
     name="query_parquet_output_file",
     description=(
-        "Run a SQL query against a parquet output file in S3 using DuckDB. "
-        "Provide ONE parquet s3_url and a SQL query. "
-        "SQL MUST read FROM output."
+        "Run a read-only DuckDB SQL query against ONE parquet output file in S3. "
+        "The file is exposed as table `output` with schema: "
+        "(time TIMESTAMP_NS, feature_id BIGINT, type VARCHAR, flow FLOAT, velocity FLOAT, depth FLOAT, nudge FLOAT). "
+        "Query must be a single SELECT or WITH...SELECT statement and must read FROM output."
     ),
 )
 def query_parquet_output_file_tool(
     s3_url: Annotated[
         str,
         Field(
-            description="Full URL to the parquet file (s3://... or https://...)",
+            description="Full URL to ONE parquet file (s3://... or https://...)",
             pattern=r"^(?:https://|s3://).+\.parquet$",
         ),
     ],
     query: Annotated[
         str,
         Field(
-            description="DuckDB SQL query (read-only). Must start with SELECT or WITH. Must read FROM output.",
+            description=(
+                "DuckDB SQL query against table `output`. "
+                "Single read-only SELECT or WITH...SELECT statement only. Must read FROM output. "
+                "Available columns: time, feature_id, type, flow, velocity, depth, nudge."
+            ),
             pattern=r"(?is)^\s*(?:WITH\b.*?\bSELECT\b|SELECT\b).*$",
         ),
     ],
@@ -352,23 +357,28 @@ def query_parquet_output_file_tool(
 @mcp.tool(
     name="query_netcdf_output_file",
     description=(
-        "Run a SQL query against a netcdf output file in S3 using DuckDB. "
-        "Provide ONE netcdf s3_url and a SQL query. "
-        "SQL MUST read FROM output."
+        "Run a read-only DuckDB SQL query against ONE netcdf output file in S3. "
+        "The file is exposed as table `output` with schema: "
+        "(time TIMESTAMP_NS, feature_id BIGINT, type VARCHAR, flow FLOAT, velocity FLOAT, depth FLOAT, nudge FLOAT). "
+        "Query must be a single SELECT or WITH...SELECT statement and must read FROM output."
     ),
 )
 def query_netcdf_output_file_tool(
     s3_url: Annotated[
         str,
         Field(
-            description="Full URL to the netcdf file (s3://... or https://...)",
+            description="Full URL to ONE netcdf file (s3://... or https://...)",
             pattern=r"^(?:https://|s3://).+\.nc$",
         ),
     ],
     query: Annotated[
         str,
         Field(
-            description="DuckDB SQL query (read-only). Must start with SELECT or WITH. Must read FROM output.",
+            description=(
+                "DuckDB SQL query against table `output`. "
+                "Single read-only SELECT or WITH...SELECT statement only. Must read FROM output. "
+                "Available columns: time, feature_id, type, flow, velocity, depth, nudge."
+            ),
             pattern=r"(?is)^\s*(?:WITH\b.*?\bSELECT\b|SELECT\b).*$",
         ),
     ],
@@ -378,43 +388,46 @@ def query_netcdf_output_file_tool(
 @mcp.tool(
     name="create_plotly_chart_from_parquet_output_file",
     description=(
-        "Create a Plotly-compatible chart JSON from a parquet output file in S3. "
-        "Provide ONE parquet s3_url and a SQL query that reads from it. "
-        "SQL MUST read FROM output."
+        "Create a Plotly-compatible line chart JSON from ONE parquet output file in S3. "
+        "The file is exposed as table `output` with schema: "
+        "(time TIMESTAMP_NS, feature_id BIGINT, type VARCHAR, flow FLOAT, velocity FLOAT, depth FLOAT, nudge FLOAT). "
+        "Query must be a single read-only SELECT or WITH...SELECT statement, must read FROM output, "
+        "and should return `time` plus at least one metric column such as flow, velocity, depth, or nudge."
     ),
 )
 def create_plotly_chart_from_parquet_output_file_tool(
     s3_url: Annotated[
         str,
         Field(
-            description="Full URL to a parquet file (s3://... or https://...)",
+            description="Full URL to ONE parquet file (s3://... or https://...)",
             pattern=r"^(?:https://|s3://).+\.parquet$",
         ),
     ],
     query: Annotated[
         str,
         Field(
-            description="DuckDB SQL query (read-only). Must start with SELECT or WITH. Must read FROM output.",
+            description=(
+                "DuckDB SQL query against table `output`. "
+                "Single read-only SELECT or WITH...SELECT statement only. Must read FROM output. "
+                "Chart queries should return `time` and one metric column such as flow, velocity, depth, or nudge."
+            ),
             pattern=r"(?is)^\s*(?:WITH\b.*?\bSELECT\b|SELECT\b).*$",
         ),
     ],
     title: Annotated[
         Optional[str],
         Field(description="Optional chart title."),
-    ] = None,
+    ] = None
 ) -> Dict[str, Any]:
     LOGGER.info(
         "Tool create_plotly_chart_from_parquet_output_file called (title=%s)",
         title
     )
-    return _get_json_raw(
-        "create_plotly_chart_from_parquet_output_file",
-        params={
-            "s3_url": s3_url,
-            "query": query,
-            "title": title,
-        },
-    )
+    return _get_json_raw("create_plotly_chart_from_parquet_output_file", params={
+        "s3_url": s3_url,
+        "query": query,
+        "title": title,
+    })
 
 @mcp.tool(
     name="query_hydrofabric_parquet_file",

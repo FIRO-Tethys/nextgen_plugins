@@ -4,8 +4,7 @@ import os
 import json
 import logging
 import pandas as pd
-import plotly.express as px
-from plotly.utils import PlotlyJSONEncoder
+
 
 from datetime import datetime
 from typing import Dict, List, Any, Optional
@@ -18,13 +17,14 @@ from .utils_rest import (
     _duckdb_query_parquet,
     _duckdb_query_netcdf,
     _get_troute_df,
-    _auto_pick_axes,
     _duckdb_query_hydrofabric_parquet,
     _duckdb_lookup_hydrofabric_feature,
     _normalize_record,
     _get_feature_center,
     _pick_filter_value,
     HYDROFABRIC_LAYER_CONFIG,
+    validate_output_sql,
+    _create_plotly_chart
 )
 
 logger = logging.getLogger(__name__)
@@ -275,34 +275,43 @@ def list_available_models() -> Dict:
         return {"path": s3_url, "models": []}
     
 def query_netcdf_output_file(s3_url, query) -> Dict:
-    """Run a query against a netcdf output file on S3. Query params depend on the desired query."""
-    logger.info(f"Received request to query NetCDF file at {s3_url} with query: {query}")    
+    """Run a read-only DuckDB query against a netcdf output file on S3 (view name: `output`)."""
+    logger.info(f"Received request to query NetCDF file at {s3_url} with query: {query}")
     file_url = s3_url
     if file_url.startswith("s3://ciroh-community-ngen-datastream"):
-        file_url = file_url.replace("s3://ciroh-community-ngen-datastream", "https://ciroh-community-ngen-datastream.s3.us-east-1.amazonaws.com")
- 
+        file_url = file_url.replace(
+            "s3://ciroh-community-ngen-datastream",
+            "https://ciroh-community-ngen-datastream.s3.us-east-1.amazonaws.com",
+        )
+
     if not file_url:
         logger.error("Missing required query param: s3_url")
         return {"error": "Missing required query param: s3_url"}
-    if not query:
-        logger.error("Missing required query param: query")
-        return {"error": "Missing required query param: query"}
+
+    try:
+        query = validate_output_sql(query)
+    except ValueError as e:
+        logger.error(f"Invalid SQL query: {e}")
+        return {"file": file_url, "query": query, "error": str(e)}
 
     try:
         initial_df = _get_troute_df(file_url)
-        logger.info(f"Initial DataFrame loaded with {len(initial_df)} rows and columns: {initial_df.columns.tolist()}")
+        logger.info(
+            f"Initial DataFrame loaded with {len(initial_df)} rows and columns: {initial_df.columns.tolist()}"
+        )
         df = _duckdb_query_netcdf(initial_df, query)
-        # Make timestamps JSON-friendly
+
         if "time" in df.columns:
             df["time"] = pd.to_datetime(df["time"], errors="coerce").dt.strftime("%Y-%m-%dT%H:%M:%S.%fZ")
+
         logger.info(f"Query returned {len(df)} rows and columns: {df.columns.tolist()}")
-        return{
-                "file": file_url,
-                "query": query,
-                "columns": list(df.columns),
-                "rows": int(len(df)),
-                "data": df.to_dict(orient="records"),
-            }
+        return {
+            "file": file_url,
+            "query": query,
+            "columns": list(df.columns),
+            "rows": int(len(df)),
+            "data": df.to_dict(orient="records"),
+        }
     except FileNotFoundError:
         logger.error(f"File not found: {file_url}")
         return {"file": file_url, "query": query, "columns": [], "rows": 0, "data": []}
@@ -311,33 +320,39 @@ def query_netcdf_output_file(s3_url, query) -> Dict:
         return {"file": file_url, "query": query, "error": str(e)}
 
 def query_parquet_output_file(s3_url, query) -> Dict:
-    """Run any DuckDB SQL query against a Parquet file on S3 (view name: `output`)."""
+    """Run a read-only DuckDB query against a Parquet output file on S3 (view name: `output`)."""
     file_url = s3_url
     logger.info(f"Received query request for file: {file_url} with query: {query}")
     if file_url.startswith("s3://ciroh-community-ngen-datastream"):
-        file_url = file_url.replace("s3://ciroh-community-ngen-datastream", "https://ciroh-community-ngen-datastream.s3.us-east-1.amazonaws.com")
+        file_url = file_url.replace(
+            "s3://ciroh-community-ngen-datastream",
+            "https://ciroh-community-ngen-datastream.s3.us-east-1.amazonaws.com",
+        )
 
     if not file_url:
         logger.error("Missing required query param: s3_url")
         return {"error": "Missing required query param: s3_url"}
-    if not query:
-        logger.error("Missing required query param: query")
-        return {"error": "Missing required query param: query"}
+
+    try:
+        query = validate_output_sql(query)
+    except ValueError as e:
+        logger.error(f"Invalid SQL query: {e}")
+        return {"file": file_url, "query": query, "error": str(e)}
 
     try:
         df = _duckdb_query_parquet(file_url, query)
 
-        # Make timestamps JSON-friendly
         if "time" in df.columns:
             df["time"] = pd.to_datetime(df["time"], errors="coerce").dt.strftime("%Y-%m-%dT%H:%M:%S.%fZ")
+
         logger.info(f"Query returned {len(df)} rows and columns: {df.columns.tolist()}")
-        return{
-                "file": file_url,
-                "query": query,
-                "columns": list(df.columns),
-                "rows": int(len(df)),
-                "data": df.to_dict(orient="records"),
-            }
+        return {
+            "file": file_url,
+            "query": query,
+            "columns": list(df.columns),
+            "rows": int(len(df)),
+            "data": df.to_dict(orient="records"),
+        }
     except FileNotFoundError:
         logger.error(f"File not found: {file_url}")
         return {"file": file_url, "query": query, "columns": [], "rows": 0, "data": []}
@@ -346,64 +361,50 @@ def query_parquet_output_file(s3_url, query) -> Dict:
         return {"file": file_url, "query": query, "error": str(e)}
 
 def create_plotly_chart_from_parquet_output_file(s3_url, query, title: str) -> Dict:
-    """Run a query against an output file on S3 and return a Plotly chart JSON based on the results."""
+    """Run a read-only DuckDB query against a parquet output file on S3 and return Plotly chart JSON."""
     logger.info(f"Received request to create Plotly chart from file: {s3_url} with query: {query}")
     file_url = s3_url
-    logger.info(f"Received query request for file: {file_url} with query: {query}")
     if file_url.startswith("s3://ciroh-community-ngen-datastream"):
-        file_url = file_url.replace("s3://ciroh-community-ngen-datastream", "https://ciroh-community-ngen-datastream.s3.us-east-1.amazonaws.com")
+        file_url = file_url.replace(
+            "s3://ciroh-community-ngen-datastream",
+            "https://ciroh-community-ngen-datastream.s3.us-east-1.amazonaws.com",
+        )
 
     if not file_url:
         logger.error("Missing required query param: s3_url")
         return {"error": "Missing required query param: s3_url"}
-    if not query:
-        logger.error("Missing required query param: query")
-        return {"error": "Missing required query param: query"}
+
+    try:
+        query = validate_output_sql(query)
+    except ValueError as e:
+        logger.error(f"Invalid SQL query for chart: {e}")
+        return {"file": file_url, "query": query, "error": str(e)}
 
     try:
         df = _duckdb_query_parquet(file_url, query)
 
-        # Make timestamps JSON-friendly
         if "time" in df.columns:
             df["time"] = pd.to_datetime(df["time"], errors="coerce").dt.strftime("%Y-%m-%dT%H:%M:%S.%fZ")
+
         logger.info(f"Chart returned {len(df)} rows and columns: {df.columns.tolist()}")
-        fig = _create_plotly_chart(
-            df=df,
-            title=title,
-        )
+        fig = _create_plotly_chart(df=df, title=title)
+        if isinstance(fig, dict) and fig.get("error"):
+            return {"file": file_url, "query": query, "error": fig["error"]}
+
         return {
-                "figure": fig,
-            }
-        
+            "file": file_url,
+            "query": query,
+            "columns": list(df.columns),
+            "rows": int(len(df)),
+            "figure": fig,
+        }
+
     except FileNotFoundError:
         logger.error(f"File not found: {file_url}")
         return {"file": file_url, "query": query, "columns": [], "rows": 0, "data": []}
     except Exception as e:
-        logger.error(f"Error querying Parquet file: {e}")
+        logger.error(f"Error querying Parquet file for chart: {e}")
         return {"file": file_url, "query": query, "error": str(e)}
-
-def _create_plotly_chart(
-    df: pd.DataFrame,
-    title: str,
-) -> Dict[str, Any]:
-    logger.info(
-        f"Creating Plotly chart from data"
-    )
-    logger.info(f"DataFrame has {len(df)} rows and columns: {df.columns.tolist()}")
-    columns = df.columns.tolist()
-    if len(columns) < 2:
-        logger.error("Not enough columns in query result to create a chart. Need at least 2.")
-        return {"error": "Not enough columns in query result to create a chart. Need at least 2."}
-    x, y = _auto_pick_axes(columns)
-    fig = px.line(
-        df,
-        x=x,
-        y=y,
-        title=title,
-    )
-
-    fig.update_layout(template="plotly_white")
-    return json.loads(json.dumps(fig.to_plotly_json(), cls=PlotlyJSONEncoder))
 
 def query_hydrofabric_parquet_file(hydrofabric_id: str, limit: int = 50) -> Dict:
     """Run a hydrofabric id lookup against the hydrofabric parquet file on S3."""
