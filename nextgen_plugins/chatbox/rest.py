@@ -5,7 +5,6 @@ import json
 import logging
 import pandas as pd
 
-
 from datetime import datetime
 from typing import Dict, List, Any, Optional
 from .validators import OutputsFilesQuery
@@ -24,13 +23,16 @@ from .utils_rest import (
     _pick_filter_value,
     HYDROFABRIC_LAYER_CONFIG,
     validate_output_sql,
-    _create_plotly_chart
+    _create_plotly_chart,
+    _success_payload,
+    _error_payload,
+    _list_payload,
 )
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
 
-BUCKET = os.getenv("BUCKET","ciroh-community-ngen-datastream")
+BUCKET = os.getenv("BUCKET", "ciroh-community-ngen-datastream")
 OUTPUTS_DIR = "outputs"
 PREFIX_HYDROFABRIC = "v2.2_hydrofabric"
 NGEN_RUN_PREFIX = "ngen-run/outputs/troute"
@@ -38,11 +40,13 @@ HYDROFABRIC_INDEX_URL = (
     "https://communityhydrofabric.s3.us-east-1.amazonaws.com/map/hydrofabric_index.parquet"
 )
 
+
 def _ensure_full_s3_url(path: str) -> str:
     p = str(path or "").strip()
     if p.startswith(("s3://", "https://")):
         return p
     return f"s3://{p.lstrip('/')}"
+
 
 def list_available_output_files(data) -> Dict:
     """List outputs for a given model, date, forecast, cycle, and vpu."""
@@ -50,9 +54,16 @@ def list_available_output_files(data) -> Dict:
     try:
         q = OutputsFilesQuery.model_validate(data)
     except ValidationError as e:
-        return {"errors": e.errors()}
+        return _error_payload(
+            "validation_error",
+            "Invalid output-file query parameters.",
+            details=e.errors(),
+        )
     except ValueError as e:
-        return {"errors": [{"msg": str(e)}]}
+        return _error_payload(
+            "validation_error",
+            str(e),
+        )
 
     model = q.model
     date_folder = _normalize_date_folder(q.date)
@@ -85,14 +96,12 @@ def list_available_output_files(data) -> Dict:
             )
 
         logger.info(f"Found {len(files)} files at {s3_url}")
-        return {
-            "path": s3_url,
-            "files": files,
-        }
+        return _list_payload("files", files, path=s3_url)
 
     except FileNotFoundError:
         logger.info(f"No files found at {s3_url}")
-        return {"path": s3_url, "files": []}
+        return _list_payload("files", [], path=s3_url)
+
 
 def get_output_file(model, date, forecast, cycle, vpu, file_name=None, index=None, ensemble=None) -> Dict:
     logger.info(
@@ -103,7 +112,10 @@ def get_output_file(model, date, forecast, cycle, vpu, file_name=None, index=Non
 
     if (file_name is None) == (index is None):
         logger.error("Exactly one of file_name or index must be provided.")
-        return {"error": "Provide exactly one of file_name or index"}
+        return _error_payload(
+            "bad_request",
+            "Provide exactly one of file_name or index.",
+        )
 
     date = _normalize_date_folder(date)
     s3_dir = f"s3://{BUCKET}/{OUTPUTS_DIR}/{model}/{PREFIX_HYDROFABRIC}/{date}/{forecast}/{cycle}"
@@ -126,25 +138,49 @@ def get_output_file(model, date, forecast, cycle, vpu, file_name=None, index=Non
             sel = next((it for it in items if it["name"] == file_name), None)
             if not sel:
                 logger.error(f"file_name '{file_name}' not found in {s3_dir}")
-                return {"dir": s3_dir, "count": len(items), "error": f"file_name not found: {file_name}"}
+                return _error_payload(
+                    "not_found",
+                    f"file_name not found: {file_name}",
+                    dir=s3_dir,
+                    count=len(items),
+                )
         else:
             try:
                 idx = int(index)
             except Exception:
                 logger.error(f"Invalid index value: {index}. Must be an integer.")
-                return {"error": "index must be an integer"}
+                return _error_payload(
+                    "bad_request",
+                    "index must be an integer",
+                    dir=s3_dir,
+                    count=len(items),
+                )
 
             if idx < 0 or idx >= len(items):
                 logger.error(f"Index out of range: {index}. Must be between 0 and {len(items)-1}.")
-                return {"dir": s3_dir, "count": len(items), "error": f"index out of range: {idx}"}
+                return _error_payload(
+                    "bad_request",
+                    f"index out of range: {idx}",
+                    dir=s3_dir,
+                    count=len(items),
+                )
             sel = items[idx]
 
         logger.info(f"Selected file for retrieval: {sel['name']} at {sel['path']}")
-        return {"dir": s3_dir, "count": len(items), "selected": sel}
+        return _success_payload(
+            dir=s3_dir,
+            count=len(items),
+            selected=sel,
+        )
 
     except FileNotFoundError:
         logger.info(f"No files found at {s3_dir}")
-        return {"dir": s3_dir, "count": 0, "selected": None}
+        return _success_payload(
+            dir=s3_dir,
+            count=0,
+            selected=None,
+        )
+
 
 def list_available_vpus(model, date, forecast, cycle) -> Dict:
     """List VPUs for a given model, date, forecast, and cycle."""
@@ -162,19 +198,14 @@ def list_available_vpus(model, date, forecast, cycle) -> Dict:
         vpus = [{"id": vpu_id, "label": _label_from_id(vpu_id)} for vpu_id in vpu_ids]
 
         logger.info(f"Found VPUs at {s3_url}: {[v['label'] for v in vpus]}")
-        return {
-            "path": s3_url,
-            "vpus": vpus,
-        }
+        return _list_payload("vpus", vpus, path=s3_url)
     except FileNotFoundError:
         logger.info(f"No VPUs found at {s3_url}")
-        return {
-            "path": s3_url,
-            "vpus": [],
-        }
+        return _list_payload("vpus", [], path=s3_url)
+
 
 def list_available_cycles(model, date, forecast) -> Dict:
-    """List available cycles for a given model, date, and forecast"""
+    """List available cycles for a given model, date, and forecast."""
     logger.info(f"Listing cycles for model={model}, date={date}, forecast={forecast}")
     date = _normalize_date_folder(date)
     s3_url = f"s3://{BUCKET}/{OUTPUTS_DIR}/{model}/{PREFIX_HYDROFABRIC}/{date}/{forecast}/"
@@ -186,18 +217,12 @@ def list_available_cycles(model, date, forecast) -> Dict:
         cycle_ids = [d.split("/")[-1] for d in dirs]
         cycles = [{"id": c, "label": c} for c in cycle_ids]
         logger.info(f"Found cycles at {s3_url}: {cycle_ids}")
-        return {
-                "path": s3_url,
-                "cycles": cycles,
-            }
-            
-        
+        return _list_payload("cycles", cycles, path=s3_url)
+
     except FileNotFoundError:
-            logger.info(f"No cycles found at {s3_url}")
-            return {
-                "path": s3_url,
-                "cycles": [],
-            }
+        logger.info(f"No cycles found at {s3_url}")
+        return _list_payload("cycles", [], path=s3_url)
+
 
 def list_available_dates(model) -> Dict:
     """List available dates for a given model."""
@@ -225,19 +250,15 @@ def list_available_dates(model) -> Dict:
         dates = sorted(dates, key=lambda x: x["label"], reverse=True)
 
         logger.info(f"Found dates at {s3_url}: {[d['label'] for d in dates]}")
-        return {
-            "path": s3_url,
-            "dates": dates,
-        }
+        return _list_payload("dates", dates, path=s3_url)
+
     except FileNotFoundError:
         logger.info(f"No dates found at {s3_url}")
-        return {
-            "path": s3_url,
-            "dates": [],
-        }
+        return _list_payload("dates", [], path=s3_url)
+
 
 def list_available_forecasts(model, date) -> Dict:
-    """List available forecasts for a given model, date"""
+    """List available forecasts for a given model, date."""
     logger.info(f"Listing forecasts for model={model}, date={date}")
     date = _normalize_date_folder(date)
     s3_url = f"s3://{BUCKET}/{OUTPUTS_DIR}/{model}/{PREFIX_HYDROFABRIC}/{date}/"
@@ -250,16 +271,11 @@ def list_available_forecasts(model, date) -> Dict:
 
         forecasts = [{"id": fid, "label": lbl} for fid, lbl in zip(forecast_ids, forecast_labels)]
         logger.info(f"Found forecasts at {s3_url}: {forecast_labels}")
-        return {
-                "path": s3_url,
-                "forecasts": forecasts,
-            }
+        return _list_payload("forecasts", forecasts, path=s3_url)
     except FileNotFoundError:
         logger.info(f"No forecasts found at {s3_url}")
-        return {
-                "path": s3_url,
-                "forecasts": [],
-            }
+        return _list_payload("forecasts", [], path=s3_url)
+
 
 def list_available_models() -> Dict:
     logger.info(f"Listing available models in bucket={BUCKET} under {OUTPUTS_DIR}")
@@ -269,11 +285,13 @@ def list_available_models() -> Dict:
         dirs = fs.ls(s3_url, detail=False)
         model_ids = [d.split("/")[-1] for d in dirs]
         logger.info(f"Found models at {s3_url}: {model_ids}")
-        return {"path": s3_url, "models": [{"id": mid, "label": mid} for mid in model_ids]}
+        models = [{"id": mid, "label": mid} for mid in model_ids]
+        return _list_payload("models", models, path=s3_url)
     except FileNotFoundError:
         logger.info(f"No models found at {s3_url}")
-        return {"path": s3_url, "models": []}
-    
+        return _list_payload("models", [], path=s3_url)
+
+
 def query_netcdf_output_file(s3_url, query) -> Dict:
     """Run a read-only DuckDB query against a netcdf output file on S3 (view name: `output`)."""
     logger.info(f"Received request to query NetCDF file at {s3_url} with query: {query}")
@@ -286,13 +304,21 @@ def query_netcdf_output_file(s3_url, query) -> Dict:
 
     if not file_url:
         logger.error("Missing required query param: s3_url")
-        return {"error": "Missing required query param: s3_url"}
+        return _error_payload(
+            "bad_request",
+            "Missing required query param: s3_url",
+        )
 
     try:
         query = validate_output_sql(query)
     except ValueError as e:
         logger.error(f"Invalid SQL query: {e}")
-        return {"file": file_url, "query": query, "error": str(e)}
+        return _error_payload(
+            "validation_error",
+            str(e),
+            file=file_url,
+            query=query,
+        )
 
     try:
         initial_df = _get_troute_df(file_url)
@@ -305,19 +331,33 @@ def query_netcdf_output_file(s3_url, query) -> Dict:
             df["time"] = pd.to_datetime(df["time"], errors="coerce").dt.strftime("%Y-%m-%dT%H:%M:%S.%fZ")
 
         logger.info(f"Query returned {len(df)} rows and columns: {df.columns.tolist()}")
-        return {
-            "file": file_url,
-            "query": query,
-            "columns": list(df.columns),
-            "rows": int(len(df)),
-            "data": df.to_dict(orient="records"),
-        }
+        return _success_payload(
+            file=file_url,
+            query=query,
+            columns=list(df.columns),
+            rows=int(len(df)),
+            data=df.to_dict(orient="records"),
+        )
     except FileNotFoundError:
         logger.error(f"File not found: {file_url}")
-        return {"file": file_url, "query": query, "columns": [], "rows": 0, "data": []}
+        return _error_payload(
+            "not_found",
+            f"File not found: {file_url}",
+            file=file_url,
+            query=query,
+            columns=[],
+            rows=0,
+            data=[],
+        )
     except Exception as e:
         logger.error(f"Error querying NetCDF file: {e}")
-        return {"file": file_url, "query": query, "error": str(e)}
+        return _error_payload(
+            "execution_error",
+            str(e),
+            file=file_url,
+            query=query,
+        )
+
 
 def query_parquet_output_file(s3_url, query) -> Dict:
     """Run a read-only DuckDB query against a Parquet output file on S3 (view name: `output`)."""
@@ -331,13 +371,21 @@ def query_parquet_output_file(s3_url, query) -> Dict:
 
     if not file_url:
         logger.error("Missing required query param: s3_url")
-        return {"error": "Missing required query param: s3_url"}
+        return _error_payload(
+            "bad_request",
+            "Missing required query param: s3_url",
+        )
 
     try:
         query = validate_output_sql(query)
     except ValueError as e:
         logger.error(f"Invalid SQL query: {e}")
-        return {"file": file_url, "query": query, "error": str(e)}
+        return _error_payload(
+            "validation_error",
+            str(e),
+            file=file_url,
+            query=query,
+        )
 
     try:
         df = _duckdb_query_parquet(file_url, query)
@@ -346,19 +394,33 @@ def query_parquet_output_file(s3_url, query) -> Dict:
             df["time"] = pd.to_datetime(df["time"], errors="coerce").dt.strftime("%Y-%m-%dT%H:%M:%S.%fZ")
 
         logger.info(f"Query returned {len(df)} rows and columns: {df.columns.tolist()}")
-        return {
-            "file": file_url,
-            "query": query,
-            "columns": list(df.columns),
-            "rows": int(len(df)),
-            "data": df.to_dict(orient="records"),
-        }
+        return _success_payload(
+            file=file_url,
+            query=query,
+            columns=list(df.columns),
+            rows=int(len(df)),
+            data=df.to_dict(orient="records"),
+        )
     except FileNotFoundError:
         logger.error(f"File not found: {file_url}")
-        return {"file": file_url, "query": query, "columns": [], "rows": 0, "data": []}
+        return _error_payload(
+            "not_found",
+            f"File not found: {file_url}",
+            file=file_url,
+            query=query,
+            columns=[],
+            rows=0,
+            data=[],
+        )
     except Exception as e:
         logger.error(f"Error querying Parquet file: {e}")
-        return {"file": file_url, "query": query, "error": str(e)}
+        return _error_payload(
+            "execution_error",
+            str(e),
+            file=file_url,
+            query=query,
+        )
+
 
 def create_plotly_chart_from_parquet_output_file(s3_url, query, title: str) -> Dict:
     """Run a read-only DuckDB query against a parquet output file on S3 and return Plotly chart JSON."""
@@ -372,13 +434,21 @@ def create_plotly_chart_from_parquet_output_file(s3_url, query, title: str) -> D
 
     if not file_url:
         logger.error("Missing required query param: s3_url")
-        return {"error": "Missing required query param: s3_url"}
+        return _error_payload(
+            "bad_request",
+            "Missing required query param: s3_url",
+        )
 
     try:
         query = validate_output_sql(query)
     except ValueError as e:
         logger.error(f"Invalid SQL query for chart: {e}")
-        return {"file": file_url, "query": query, "error": str(e)}
+        return _error_payload(
+            "validation_error",
+            str(e),
+            file=file_url,
+            query=query,
+        )
 
     try:
         df = _duckdb_query_parquet(file_url, query)
@@ -388,23 +458,44 @@ def create_plotly_chart_from_parquet_output_file(s3_url, query, title: str) -> D
 
         logger.info(f"Chart returned {len(df)} rows and columns: {df.columns.tolist()}")
         fig = _create_plotly_chart(df=df, title=title)
-        if isinstance(fig, dict) and fig.get("error"):
-            return {"file": file_url, "query": query, "error": fig["error"]}
 
-        return {
-            "file": file_url,
-            "query": query,
-            "columns": list(df.columns),
-            "rows": int(len(df)),
-            "figure": fig,
-        }
+        if isinstance(fig, dict) and fig.get("error"):
+            return _error_payload(
+                "validation_error",
+                fig["error"],
+                file=file_url,
+                query=query,
+                columns=list(df.columns),
+                rows=int(len(df)),
+            )
+
+        return _success_payload(
+            file=file_url,
+            query=query,
+            columns=list(df.columns),
+            rows=int(len(df)),
+            figure=fig,
+        )
 
     except FileNotFoundError:
         logger.error(f"File not found: {file_url}")
-        return {"file": file_url, "query": query, "columns": [], "rows": 0, "data": []}
+        return _error_payload(
+            "not_found",
+            f"File not found: {file_url}",
+            file=file_url,
+            query=query,
+            columns=[],
+            rows=0,
+        )
     except Exception as e:
         logger.error(f"Error querying Parquet file for chart: {e}")
-        return {"file": file_url, "query": query, "error": str(e)}
+        return _error_payload(
+            "execution_error",
+            str(e),
+            file=file_url,
+            query=query,
+        )
+
 
 def query_hydrofabric_parquet_file(hydrofabric_id: str, limit: int = 50) -> Dict:
     """Run a hydrofabric id lookup against the hydrofabric parquet file on S3."""
@@ -416,14 +507,15 @@ def query_hydrofabric_parquet_file(hydrofabric_id: str, limit: int = 50) -> Dict
 
     hydrofabric_id = (hydrofabric_id or "").strip()
     if not hydrofabric_id:
-        return {
-            "file": HYDROFABRIC_INDEX_URL,
-            "hydrofabric_id": hydrofabric_id,
-            "columns": [],
-            "rows": 0,
-            "data": [],
-            "error": "hydrofabric_id is required",
-        }
+        return _error_payload(
+            "bad_request",
+            "hydrofabric_id is required",
+            file=HYDROFABRIC_INDEX_URL,
+            hydrofabric_id=hydrofabric_id,
+            columns=[],
+            rows=0,
+            data=[],
+        )
 
     try:
         df = _duckdb_query_hydrofabric_parquet(hydrofabric_id=hydrofabric_id, limit=limit)
@@ -432,94 +524,104 @@ def query_hydrofabric_parquet_file(hydrofabric_id: str, limit: int = 50) -> Dict
             len(df),
             df.columns.tolist(),
         )
-        return {
-            "file": HYDROFABRIC_INDEX_URL,
-            "hydrofabric_id": hydrofabric_id,
-            "columns": list(df.columns),
-            "rows": int(len(df)),
-            "data": df.to_dict(orient="records"),
-        }
+        return _success_payload(
+            file=HYDROFABRIC_INDEX_URL,
+            hydrofabric_id=hydrofabric_id,
+            columns=list(df.columns),
+            rows=int(len(df)),
+            data=df.to_dict(orient="records"),
+        )
     except FileNotFoundError:
         logger.error("File not found: %s", HYDROFABRIC_INDEX_URL)
-        return {
-            "file": HYDROFABRIC_INDEX_URL,
-            "hydrofabric_id": hydrofabric_id,
-            "columns": [],
-            "rows": 0,
-            "data": [],
-        }
+        return _error_payload(
+            "not_found",
+            f"File not found: {HYDROFABRIC_INDEX_URL}",
+            file=HYDROFABRIC_INDEX_URL,
+            hydrofabric_id=hydrofabric_id,
+            columns=[],
+            rows=0,
+            data=[],
+        )
     except Exception as e:
         logger.error("Error querying hydrofabric parquet file: %s", e)
-        return {
-            "file": HYDROFABRIC_INDEX_URL,
-            "hydrofabric_id": hydrofabric_id,
-            "error": str(e),
-        }
+        return _error_payload(
+            "execution_error",
+            str(e),
+            file=HYDROFABRIC_INDEX_URL,
+            hydrofabric_id=hydrofabric_id,
+        )
+
 
 def build_hydrofabric_feature_map_config(hydrofabric_id: str) -> Dict[str, Any]:
     hydrofabric_id = (hydrofabric_id or "").strip()
     if not hydrofabric_id:
-        return {
-            "type": "hydrofabric_feature_map_config",
-            "error": "hydrofabric_id is required",
-        }
+        return _error_payload(
+            "bad_request",
+            "hydrofabric_id is required",
+            type="hydrofabric_feature_map_config",
+        )
 
     try:
         df = _duckdb_lookup_hydrofabric_feature(hydrofabric_id)
         if df.empty:
-            return {
-                "type": "hydrofabric_feature_map_config",
-                "query": hydrofabric_id,
-                "found": False,
-                "error": f"No hydrofabric feature found for '{hydrofabric_id}'",
-            }
+            return _success_payload(
+                type="hydrofabric_feature_map_config",
+                query=hydrofabric_id,
+                found=False,
+                feature=None,
+                match=None,
+                highlight=None,
+                camera=None,
+            )
 
         row = _normalize_record(df.iloc[0].to_dict())
         layer_key = str(row.get("layer") or "").strip().lower()
 
         layer_cfg = HYDROFABRIC_LAYER_CONFIG.get(layer_key)
         if not layer_cfg:
-            return {
-                "type": "hydrofabric_feature_map_config",
-                "query": hydrofabric_id,
-                "found": True,
-                "feature": row,
-                "error": f"Unsupported hydrofabric layer '{layer_key}'",
-            }
+            return _error_payload(
+                "unsupported_layer",
+                f"Unsupported hydrofabric layer '{layer_key}'",
+                type="hydrofabric_feature_map_config",
+                query=hydrofabric_id,
+                found=True,
+                feature=row,
+            )
 
         center = _get_feature_center(row)
         id_property = layer_cfg["id_property"]
         filter_value = _pick_filter_value(row, id_property, hydrofabric_id)
 
-        return {
-            "type": "hydrofabric_feature_map_config",
-            "query": hydrofabric_id,
-            "found": True,
-            "feature": row,
-            "match": {
+        return _success_payload(
+            type="hydrofabric_feature_map_config",
+            query=hydrofabric_id,
+            found=True,
+            feature=row,
+            match={
                 "matched_column": row.get("matched_column"),
                 "match_type": row.get("match_type"),
             },
-            "highlight": {
+            highlight={
                 "pmtiles_url": layer_cfg["pmtiles_url"],
                 "map_layer_id": layer_cfg["map_layer_id"],
                 "id_property": id_property,
                 "value": filter_value,
                 "layer_key": layer_key,
             },
-            "camera": {
+            camera={
                 "mode": "rendered-feature-bounds-with-fallback",
                 "center": center,
                 "zoom": layer_cfg["default_zoom"],
                 "padding": 40,
                 "maxZoom": 13,
             },
-        }
+        )
 
     except Exception as e:
         logger.exception("Error building hydrofabric map config")
-        return {
-            "type": "hydrofabric_feature_map_config",
-            "query": hydrofabric_id,
-            "error": str(e),
-        }
+        return _error_payload(
+            "execution_error",
+            str(e),
+            type="hydrofabric_feature_map_config",
+            query=hydrofabric_id,
+        )

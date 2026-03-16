@@ -48,6 +48,40 @@ HYDROFABRIC_LAYER_CONFIG = {
     },
 }
 
+def _success_payload(**kwargs) -> Dict[str, Any]:
+    return {
+        "ok": True,
+        "error": None,
+        **kwargs,
+    }
+
+def _error_payload(
+    code: str,
+    message: str,
+    *,
+    details: Any = None,
+    **kwargs,
+) -> Dict[str, Any]:
+    error_obj = {
+        "code": code,
+        "message": message,
+    }
+    if details is not None:
+        error_obj["details"] = details
+
+    return {
+        "ok": False,
+        "error": error_obj,
+        **kwargs,
+    }
+
+def _list_payload(key: str, items: list, *, path: str) -> Dict[str, Any]:
+    return _success_payload(
+        path=path,
+        count=len(items),
+        **{key: items},
+    )
+
 def _create_plotly_chart(
     df: pd.DataFrame,
     title: str,

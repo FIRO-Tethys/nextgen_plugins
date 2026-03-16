@@ -124,10 +124,15 @@ def list_available_dates_tool(
         if start_date <= di <= end_date:
             filtered.append(item)
 
+    total_count = len(filtered)
+
     if offset or limit:
         filtered = filtered[offset : (offset + limit) if limit else None]
 
     raw["dates"] = filtered
+    raw["count"] = len(filtered)
+    raw["total_count"] = total_count
+
     return _prefer_id_objects(raw, "dates")
 
 @mcp.tool(
