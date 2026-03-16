@@ -20,7 +20,6 @@ from nextgen_plugins.chatbox.rest import (
     build_hydrofabric_feature_map_config
 )
 
-NRDS_API_TOKEN = os.getenv("NRDS_API_TOKEN", "be5f936afa81436a43a116546f8c8f1ad2a86079")
 REST_API_HOST = os.getenv("NRDS_API_HOST", "http://localhost:8000/apps/nrds/api").rstrip("/")
 DATE_PATTERN = r"^(?:\d{4}-\d{2}-\d{2}|\d{4}/\d{2}/\d{2})$"
 DEFAULT_START = "2025-08-01"
@@ -77,14 +76,6 @@ def _get_json_raw(endpoint_key: str, params: Optional[Dict[str, Any]] = None, **
         )
     raise KeyError(f"Unknown endpoint_key: {endpoint_key}")
 
-def _headers() -> Dict[str, str]:
-    """
-        Headers for REST API requests, including auth if token is set.
-    """
-    h = {"Accept": "application/json"}
-    if NRDS_API_TOKEN:
-        h["Authorization"] = f"Token {NRDS_API_TOKEN}"
-    return h
 
 def _is_html_response(resp: requests.Response) -> bool:
     """
