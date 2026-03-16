@@ -5,6 +5,7 @@ import re
 from typing import Dict, Any, Optional
 from datetime import datetime, date
 from zoneinfo import ZoneInfo
+from nextgen_plugins.chatbox.validators import normalize_vpu
 from nextgen_plugins.chatbox.rest import (
     list_available_models,
     list_available_dates,
@@ -91,15 +92,29 @@ def _is_html_response(resp: requests.Response) -> bool:
 
 def _as_id(value: str) -> str:
     """
-    Convert labels to ids for known patterns:
+    Convert user-facing labels to canonical ids for known patterns:
       - forecasts: "short range" -> "short_range"
       - vpu: "VPU 14" -> "VPU_14"
-    If already an id, returns unchanged.
+      - vpu subregions: "VPU 3W" -> "VPU_03W", "10u" -> "VPU_10U"
+
+    If the value is already canonical, it is returned unchanged.
     """
     if value is None:
         return value
+
     s = str(value).strip()
-    
+    if not s:
+        return s
+
+    forecast_candidate = s.lower().replace(" ", "_")
+    if forecast_candidate in {"short_range", "medium_range", "analysis_assim_extend"}:
+        return forecast_candidate
+
+    try:
+        return normalize_vpu(s)
+    except ValueError:
+        pass
+
     return s.replace(" ", "_")
 
 def _prefer_id_objects(payload: Dict[str, Any], key: str) -> Dict[str, Any]:

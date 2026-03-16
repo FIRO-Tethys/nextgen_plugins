@@ -20,7 +20,6 @@ from .utils import (
 )
 from .validations import (
     FORECASTS,
-    VPUS,
     MODELS
 )
 
@@ -247,7 +246,12 @@ def list_available_outputs_files_tool(
             pattern=r"^(?:[01]\d|2[0-3])$",
         ),
     ] = "00",
-    vpu: Annotated[VPUS, Field(description="VPU id")] = "VPU_6",
+    vpu: Annotated[
+        str,
+        Field(
+            description="VPU id or label (e.g. VPU_06, VPU 6, 6, VPU_03W, VPU 3W, 3W)"
+        ),
+    ] = "VPU_06",
     ensemble: Annotated[
         Optional[str], Field(description="Optional ensemble member (1 or 16)", pattern=r"^(?:1|16)$")
     ] = None,
@@ -275,7 +279,12 @@ def resolve_output_file_tool(
     date: Annotated[Optional[str], Field(description="YYYY-MM-DD or YYYY/MM/DD", pattern=DATE_PATTERN)] = None,
     forecast: Annotated[FORECASTS, Field(description="Forecast id")] = "short_range",
     cycle: Annotated[str, Field(description="Cycle", pattern=r"^(?:[01]\d|2[0-3])$")] = "00",
-    vpu: Annotated[VPUS, Field(description="VPU id")] = "VPU_06",
+    vpu: Annotated[
+        str,
+        Field(
+            description="VPU id or label (e.g. VPU_06, VPU 6, 6, VPU_03W, VPU 3W, 3W)"
+        ),
+    ] = "VPU_06",    
     ensemble: Annotated[Optional[str], Field(description="Ensemble (medium_range)", pattern=r"^\d+$")] = None,
     file_name: Annotated[Optional[str], Field(description="Exact filename (e.g. troute_output_...parquet)")] = None,
     index: Annotated[Optional[int], Field(description="0-based index into sorted file list", ge=0)] = None,

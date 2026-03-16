@@ -1,37 +1,60 @@
 # nextgen_plugins/chatbox/validators.py
+from __future__ import annotations
+
 import re
 from datetime import date, datetime
 from typing import Literal, Optional
-from __future__ import annotations
+
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 DATE_RE = re.compile(r"^(?:\d{4}-\d{2}-\d{2}|\d{4}/\d{2}/\d{2})$")
-VPU_RE = re.compile(r"^VPU_(\d{1,2})$", re.IGNORECASE)
-VPU_NUM_RE = re.compile(r"^\d{1,2}$")
-VPU_LOOSE_RE = re.compile(r"vpu\D*(\d{1,2})", re.IGNORECASE)
+VPU_PREFIX_RE = re.compile(r"^VPU[_\s-]*(\d{1,2})([A-Za-z]?)$", re.IGNORECASE)
+VPU_NUM_RE = re.compile(r"^(\d{1,2})([A-Za-z]?)$", re.IGNORECASE)
+VPU_ALLOWED_SUFFIXES = {"U", "L", "W", "S", "N"}
 
 Forecasts = Literal["short_range", "medium_range", "analysis_assim_extend"]
+
 
 def normalize_date_ymd(s: str) -> str:
     s = (s or "").strip().replace("/", "-")
     datetime.strptime(s, "%Y-%m-%d")
     return s
 
+
 def normalize_vpu(s: str) -> str:
+    """
+    Normalize VPU identifiers to canonical ids.
+
+    Accepted examples:
+      - VPU_06
+      - VPU 6
+      - VPU6
+      - 6
+      - VPU_03W
+      - VPU 3W
+      - VPU3W
+      - 3W
+      - 10u -> VPU_10U
+    """
     raw = (s or "").strip()
+    if not raw:
+        raise ValueError("vpu is required")
 
-    m = VPU_RE.match(raw)
-    if m:
-        return f"VPU_{int(m.group(1)):02d}"
+    m = VPU_PREFIX_RE.match(raw) or VPU_NUM_RE.match(raw)
+    if not m:
+        raise ValueError(
+            "vpu must look like VPU_02, VPU 2, 2, VPU_03W, VPU 3W, or 3W"
+        )
 
-    if VPU_NUM_RE.match(raw):
-        return f"VPU_{int(raw):02d}"
+    num = int(m.group(1))
+    suffix = (m.group(2) or "").upper()
 
-    m = VPU_LOOSE_RE.search(raw)
-    if m:
-        return f"VPU_{int(m.group(1)):02d}"
+    if suffix and suffix not in VPU_ALLOWED_SUFFIXES:
+        allowed = ", ".join(sorted(VPU_ALLOWED_SUFFIXES))
+        raise ValueError(f"unsupported VPU suffix '{suffix}'. Allowed suffixes: {allowed}")
 
-    raise ValueError("vpu must look like VPU_02, VPU 2, or 2 (1-99)")
+    return f"VPU_{num:02d}{suffix}"
+
 
 def normalize_cycle_hour(s: str) -> str:
     raw = (s or "").strip()
@@ -39,7 +62,8 @@ def normalize_cycle_hour(s: str) -> str:
         hh = int(raw)
         if 0 <= hh <= 23:
             return f"{hh:02d}"
-    raise ValueError("cycle must be an hour 00-23 (two digits preferred)")
+    raise ValueError("cycle must be an hour 00–23 (two digits preferred)")
+
 
 class OutputsFilesQuery(BaseModel):
     model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
@@ -47,8 +71,10 @@ class OutputsFilesQuery(BaseModel):
     model: str = Field(min_length=1, description="Model id (e.g., cfe_nom)")
     date: str = Field(description="Date in YYYY-MM-DD or YYYY/MM/DD")
     forecast: Forecasts = Field(description="Forecast id")
-    cycle: str = Field(description="Cycle hour (00-23). Forecast-specific allowed values.")
-    vpu: str = Field(description="VPU id (e.g., VPU_02). Also accepts '2' or 'VPU 2'.")
+    cycle: str = Field(description="Cycle hour (00–23). Forecast-specific allowed values.")
+    vpu: str = Field(
+        description="VPU id or label (e.g., VPU_02, VPU 2, 2, VPU_03W, VPU 3W, 3W)."
+    )
     ensemble: Optional[int] = Field(
         default=None,
         ge=1,
@@ -69,8 +95,6 @@ class OutputsFilesQuery(BaseModel):
     @field_validator("vpu")
     @classmethod
     def _validate_vpu(cls, v: str) -> str:
-        if not isinstance(v, str) or not v.strip():
-            raise ValueError("vpu is required")
         return normalize_vpu(v)
 
     @field_validator("cycle")
