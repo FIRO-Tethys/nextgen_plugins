@@ -1,3 +1,4 @@
+# nextgen_plugins/chatbox/rest.py
 import fsspec
 import os
 import json
@@ -33,10 +34,10 @@ BUCKET = os.getenv("BUCKET","ciroh-community-ngen-datastream")
 OUTPUTS_DIR = "outputs"
 PREFIX_HYDROFABRIC = "v2.2_hydrofabric"
 NGEN_RUN_PREFIX = "ngen-run/outputs/troute"
- 
 HYDROFABRIC_INDEX_URL = (
     "https://communityhydrofabric.s3.us-east-1.amazonaws.com/map/hydrofabric_index.parquet"
 )
+
 def _ensure_full_s3_url(path: str) -> str:
     p = str(path or "").strip()
     if p.startswith(("s3://", "https://")):
@@ -355,7 +356,6 @@ def create_plotly_chart_from_parquet_output_file(s3_url, query, title: str) -> D
         logger.error(f"Error querying Parquet file: {e}")
         return {"file": file_url, "query": query, "error": str(e)}
 
-
 def _create_plotly_chart(
     df: pd.DataFrame,
     title: str,
@@ -378,7 +378,6 @@ def _create_plotly_chart(
 
     fig.update_layout(template="plotly_white")
     return json.loads(json.dumps(fig.to_plotly_json(), cls=PlotlyJSONEncoder))
-
 
 def query_hydrofabric_parquet_file(hydrofabric_id: str, limit: int = 50) -> Dict:
     """Run a hydrofabric id lookup against the hydrofabric parquet file on S3."""
@@ -497,4 +496,3 @@ def build_hydrofabric_feature_map_config(hydrofabric_id: str) -> Dict[str, Any]:
             "query": hydrofabric_id,
             "error": str(e),
         }
-

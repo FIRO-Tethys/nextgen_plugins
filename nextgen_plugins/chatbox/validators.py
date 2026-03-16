@@ -1,10 +1,9 @@
-from __future__ import annotations
-
+# nextgen_plugins/chatbox/validators.py
 import re
 from datetime import date, datetime
 from typing import Literal, Optional
-
-from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator, model_validator
+from __future__ import annotations
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 DATE_RE = re.compile(r"^(?:\d{4}-\d{2}-\d{2}|\d{4}/\d{2}/\d{2})$")
 VPU_RE = re.compile(r"^VPU_(\d{1,2})$", re.IGNORECASE)
@@ -13,12 +12,10 @@ VPU_LOOSE_RE = re.compile(r"vpu\D*(\d{1,2})", re.IGNORECASE)
 
 Forecasts = Literal["short_range", "medium_range", "analysis_assim_extend"]
 
-
 def normalize_date_ymd(s: str) -> str:
     s = (s or "").strip().replace("/", "-")
     datetime.strptime(s, "%Y-%m-%d")
     return s
-
 
 def normalize_vpu(s: str) -> str:
     raw = (s or "").strip()
@@ -36,7 +33,6 @@ def normalize_vpu(s: str) -> str:
 
     raise ValueError("vpu must look like VPU_02, VPU 2, or 2 (1–99)")
 
-
 def normalize_cycle_hour(s: str) -> str:
     raw = (s or "").strip()
     if raw.isdigit() and len(raw) in (1, 2):
@@ -44,7 +40,6 @@ def normalize_cycle_hour(s: str) -> str:
         if 0 <= hh <= 23:
             return f"{hh:02d}"
     raise ValueError("cycle must be an hour 00–23 (two digits preferred)")
-
 
 class OutputsFilesQuery(BaseModel):
     model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)

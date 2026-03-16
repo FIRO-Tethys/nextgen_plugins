@@ -1,3 +1,4 @@
+#nextgen_plugins/chatbox/utils_rest.py
 from datetime import datetime
 from typing import Any, Dict, List, Optional
 import json
@@ -8,11 +9,9 @@ import xarray as xr
 from shapely import wkb, wkt
 from shapely.geometry import shape
 
-
 HYDROFABRIC_INDEX_URL = (
     "https://communityhydrofabric.s3.us-east-1.amazonaws.com/map/hydrofabric_index.parquet"
 )
-
 HYDROFABRIC_LAYER_CONFIG = {
     "flowpaths": {
         "pmtiles_url": "https://communityhydrofabric.s3.us-east-1.amazonaws.com/map/kepler/flowpaths.pmtiles",
@@ -40,10 +39,8 @@ HYDROFABRIC_LAYER_CONFIG = {
     },
 }
 
-
 def _normalize_record(row: Dict[str, Any]) -> Dict[str, Any]:
     return {k: (None if pd.isna(v) else v) for k, v in row.items()}
-
 
 def _get_feature_center(row: Dict[str, Any]) -> Optional[list]:
     lon = row.get("lon")
@@ -59,7 +56,6 @@ def _get_feature_center(row: Dict[str, Any]) -> Optional[list]:
 
     return None
 
-
 def _pick_filter_value(row: Dict[str, Any], id_property: str, requested_id: str) -> str:
     value = row.get(id_property)
     if value not in (None, ""):
@@ -72,7 +68,6 @@ def _pick_filter_value(row: Dict[str, Any], id_property: str, requested_id: str)
         return str(row["id"])
 
     return str(requested_id)
-
 
 def _duckdb_lookup_hydrofabric_feature(hydrofabric_id: str) -> pd.DataFrame:
     con = duckdb.connect(database=":memory:")

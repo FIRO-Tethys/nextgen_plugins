@@ -1,6 +1,6 @@
 // chatbox.jsx
-import { useEffect, useState } from "react";
-import { runChatSession } from "./chatboxEngine";
+import { useEffect, useMemo, useState } from "react";
+import { listOllamaModels, runChatSession } from "./chatboxEngine";
 import MarkdownContent from "./markdownContent";
 import PlotlyChart from "./PlotlyChart";
 import FlowpathsPmtilesMap from "./FlowpathsPmtilesMap";
@@ -15,9 +15,17 @@ function ChatBox({ thinkingEnabled = true, model = "qwen3", modelOptions = [mode
   const [selectedModel, setSelectedModel] = useState(model);
   const [isThinkingEnabled, setIsThinkingEnabled] = useState(Boolean(thinkingEnabled));
   const [loading, setLoading] = useState(false);
+  const [loadingModels, setLoadingModels] = useState(false);
+  const [discoveredModels, setDiscoveredModels] = useState([]);
   const [error, setError] = useState("");
-  const configuredModels = Array.isArray(modelOptions) && modelOptions.length ? modelOptions : [model];
-  const availableModels = Array.from(new Set([...configuredModels, selectedModel].filter(Boolean)));
+  const configuredModels = useMemo(
+    () => (Array.isArray(modelOptions) && modelOptions.length ? modelOptions : [model]),
+    [modelOptions, model]
+  );
+  const availableModels = useMemo(
+    () => Array.from(new Set([...discoveredModels, ...configuredModels, selectedModel].filter(Boolean))),
+    [discoveredModels, configuredModels, selectedModel]
+  );
 
   useEffect(() => {
     setInput(prompt ?? "");
@@ -36,6 +44,39 @@ function ChatBox({ thinkingEnabled = true, model = "qwen3", modelOptions = [mode
       setThinking("");
     }
   }, [isThinkingEnabled]);
+
+  useEffect(() => {
+    let cancelled = false;
+    setLoadingModels(true);
+
+    listOllamaModels()
+      .then((models) => {
+        if (!cancelled) {
+          setDiscoveredModels(models);
+        }
+      })
+      .catch((err) => {
+        console.warn("Unable to load Ollama model list:", err);
+      })
+      .finally(() => {
+        if (!cancelled) {
+          setLoadingModels(false);
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!availableModels.length) {
+      return;
+    }
+    if (!selectedModel || !availableModels.includes(selectedModel)) {
+      setSelectedModel(availableModels[0]);
+    }
+  }, [availableModels, selectedModel]);
 
   const sendMessage = async () => {
     const userText = input.trim();
@@ -95,6 +136,7 @@ function ChatBox({ thinkingEnabled = true, model = "qwen3", modelOptions = [mode
           value={selectedModel}
           options={availableModels}
           onChange={setSelectedModel}
+          isLoading={loadingModels}
           disabled={loading}
         />
         <ThinkingSwitch

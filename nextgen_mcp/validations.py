@@ -1,3 +1,4 @@
+# validations.py
 from typing import Literal
 
 FORECASTS = Literal["short_range", "medium_range", "analysis_assim_extend"]

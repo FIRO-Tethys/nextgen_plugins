@@ -1,6 +1,6 @@
 // chatboxHelpers.js
 import { AUTO_FIX_SYSTEM_MSG, FILE_MSG } from "./chatboxMessages";
-
+const DEFAULT_OLLAMA_HOST = (import.meta.env.VITE_OLLAMA_HOST ?? "http://localhost:11434").replace(/\/+$/, "");
 const URL_RE = /(https?:\/\/\S+|s3:\/\/\S+)/i;
 const PARQUET_NAME_RE = /\b([A-Za-z0-9._-]+\.parquet)\b/i;
 const FROM_TARGET_RE = /\bfrom\s+([^\s;]+)/i;
@@ -196,7 +196,6 @@ export function lastToolFileUrl(messages, exts = [".parquet", ".nc", ".nc4"]) {
   return null;
 }
 
-
 export function rewriteFromToOutput(query) {
   if (typeof query !== "string" || !query.trim()) {
     return query;
@@ -357,7 +356,6 @@ export function generateAutoFixToolMsg(lastErr, priorUserText = "", repeatedSign
   };
 }
 
-
 export function generateFileMsg(fileUrl, fileType) {
   return {
     role: "assistant",
@@ -449,6 +447,49 @@ export function compactToolResultForContext(toolResult, maxItems = 50) {
 
   return toolResult;
 }
+
+
+export async function listOllamaModels(ollamaHost = DEFAULT_OLLAMA_HOST) {
+  const host = String(ollamaHost ?? DEFAULT_OLLAMA_HOST).replace(/\/+$/, "");
+  const response = await fetch(`${host}/api/tags`);
+
+  if (!response.ok) {
+    throw new Error(`Failed to load Ollama models (${response.status})`);
+  }
+
+  const payload = await response.json();
+  const models = Array.isArray(payload?.models)
+    ? payload.models
+    : [];
+
+  return Array.from(
+    new Set(
+      models
+        .map((entry) => {
+          if (typeof entry?.name === "string" && entry.name.trim()) {
+            return entry.name.trim();
+          }
+          if (typeof entry?.model === "string" && entry.model.trim()) {
+            return entry.model.trim();
+          }
+          return "";
+        })
+        .filter(Boolean)
+    )
+  );
+}
+
+function omitEmptyArgs(args) {
+  const cleaned = {};
+  for (const [key, value] of Object.entries(args ?? {})) {
+    if (value === null || value === undefined || value === "") {
+      continue;
+    }
+    cleaned[key] = value;
+  }
+  return cleaned;
+}
+
 
 // export async function getContextLengthFromPs(modelName, ollamaHost, ollamaClient = null) {
 //   try {

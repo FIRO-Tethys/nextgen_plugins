@@ -32,16 +32,7 @@ const OUTPUT_FILE_QUERY_TOOLS = new Set([
 
 const HYDROFABRIC_QUERY_TOOL = "query_hydrofabric_parquet_file";
 
-function omitEmptyArgs(args) {
-  const cleaned = {};
-  for (const [key, value] of Object.entries(args ?? {})) {
-    if (value === null || value === undefined || value === "") {
-      continue;
-    }
-    cleaned[key] = value;
-  }
-  return cleaned;
-}
+
 
 function normalizeMcpSseUrl(serverUrl) {
   const raw = String(serverUrl ?? "").trim();

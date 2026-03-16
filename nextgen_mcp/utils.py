@@ -1,3 +1,4 @@
+# utils.py
 import requests
 import os
 import re
@@ -20,10 +21,10 @@ from nextgen_plugins.chatbox.rest import (
 )
 
 NRDS_API_TOKEN = os.getenv("NRDS_API_TOKEN", "be5f936afa81436a43a116546f8c8f1ad2a86079")
-
 REST_API_HOST = os.getenv("NRDS_API_HOST", "http://localhost:8000/apps/nrds/api").rstrip("/")
-
-
+DATE_PATTERN = r"^(?:\d{4}-\d{2}-\d{2}|\d{4}/\d{2}/\d{2})$"
+DEFAULT_START = "2025-08-01"
+DEFAULT_TZ = ZoneInfo("America/Denver")
 
 def _get_json_raw(endpoint_key: str, params: Optional[Dict[str, Any]] = None, **_) -> Dict[str, Any]:
     p = params or {}
@@ -76,7 +77,6 @@ def _get_json_raw(endpoint_key: str, params: Optional[Dict[str, Any]] = None, **
         )
     raise KeyError(f"Unknown endpoint_key: {endpoint_key}")
 
-
 def _headers() -> Dict[str, str]:
     """
         Headers for REST API requests, including auth if token is set.
@@ -111,7 +111,6 @@ def _as_id(value: str) -> str:
     
     return s.replace(" ", "_")
 
-
 def _prefer_id_objects(payload: Dict[str, Any], key: str) -> None | Dict[str, Any]:
     """
     Ensure the payload always includes a list of {id,label} objects under `key`,
@@ -126,10 +125,6 @@ def _prefer_id_objects(payload: Dict[str, Any], key: str) -> None | Dict[str, An
         payload[f"{key[:-1]}_labels" if key.endswith("s") else f"{key}_labels"] = labels
         return payload
     return None
-            
-DATE_PATTERN = r"^(?:\d{4}-\d{2}-\d{2}|\d{4}/\d{2}/\d{2})$"
-DEFAULT_START = "2025-08-01"
-DEFAULT_TZ = ZoneInfo("America/Denver")
 
 def _parse_iso_date(s: str) -> date:
     s = s.strip().replace("/", "-")
