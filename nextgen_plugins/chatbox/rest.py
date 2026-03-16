@@ -44,7 +44,7 @@ def _ensure_full_s3_url(path: str) -> str:
         return p
     return f"s3://{p.lstrip('/')}"
 
-def list_available_outputs_files(data) -> Dict:
+def list_available_output_files(data) -> Dict:
     """List outputs for a given model, date, forecast, cycle, and vpu."""
     logger.info(f"Received request to list available output files with data: {data}")
     try:

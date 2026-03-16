@@ -12,7 +12,7 @@ from nextgen_plugins.chatbox.rest import (
     list_available_forecasts,
     list_available_cycles,
     list_available_vpus,
-    list_available_outputs_files,
+    list_available_output_files,
     get_output_file,
     query_parquet_output_file,
     query_netcdf_output_file,
@@ -44,8 +44,8 @@ def _get_json_raw(endpoint_key: str, params: Optional[Dict[str, Any]] = None, **
     if endpoint_key == "list_available_vpus":
         return list_available_vpus(model=p["model"], date=p["date"], forecast=p["forecast"], cycle=p["cycle"])
 
-    if endpoint_key == "list_available_outputs_files":
-        return list_available_outputs_files(data=p)
+    if endpoint_key == "list_available_output_files":
+        return list_available_output_files(data=p)
 
     if endpoint_key == "get_output_file":
         return get_output_file(

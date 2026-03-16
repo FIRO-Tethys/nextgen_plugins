@@ -335,7 +335,7 @@ export function generateAutoFixToolMsg(lastErr, priorUserText = "", repeatedSign
       errLower.includes("provide one parquet s3_url"))
   ) {
     chainHints.push(
-      "Your previous query tool call used an invalid file URL. If you do not already have a full file URL, call a prerequisite tool first: resolve_output_file (preferred for ordinal output-file requests) or list_available_outputs_files. Then call query_* with one full file URL ending in .parquet or .nc/.nc4 (not a directory).",
+      "Your previous query tool call used an invalid file URL. If you do not already have a full file URL, call a prerequisite tool first: resolve_output_file (preferred for ordinal output-file requests) or list_available_output_files. Then call query_* with one full file URL ending in .parquet or .nc/.nc4 (not a directory).",
     );
   }
 

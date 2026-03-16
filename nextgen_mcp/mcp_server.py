@@ -217,11 +217,12 @@ def list_available_vpus_tool(
     )
     return _prefer_id_objects(raw, "vpus")
 
+
 @mcp.tool(
-    name="list_available_outputs_files",
-    description="List available output files for a given model, date, forecast, cycle, and VPU (accepts id or label). Optional ensemble member for applicable forecast.",
+    name="list_available_output_files",
+    description="List available output files for a given model, date, forecast, cycle, and VPU (accepts id or label, including subregion VPUs). Optional ensemble member for applicable forecast.",
 )
-def list_available_outputs_files_tool(
+def list_available_output_files_tool(
     model: Annotated[MODELS, Field(description="Model id")] = "cfe_nom",
     date: Annotated[
         Optional[str],
@@ -267,7 +268,7 @@ def list_available_outputs_files_tool(
     if ensemble is not None:
         params["ensemble"] = int(ensemble)
 
-    raw = _get_json_raw("list_available_outputs_files", params=params)
+    raw = _get_json_raw("list_available_output_files", params=params)
     return _prefer_id_objects(raw, "files")
 
 @mcp.tool(
@@ -373,12 +374,11 @@ def query_netcdf_output_file_tool(
 ) -> Dict[str, Any]:
     return _get_json_raw("query_netcdf_output_file", params={"s3_url": s3_url, "query": query})
 
-
 @mcp.tool(
     name="create_plotly_chart_from_parquet_output_file",
     description=(
-        "Create a Plotly-compatible chart JSON from a parquet or netcdf output file in S3. "
-        "Provide ONE parquet or netcdf s3_url and a SQL query that reads from it. "
+        "Create a Plotly-compatible chart JSON from a parquet output file in S3. "
+        "Provide ONE parquet s3_url and a SQL query that reads from it. "
         "SQL MUST read FROM output."
     ),
 )
@@ -387,7 +387,7 @@ def create_plotly_chart_from_parquet_output_file_tool(
         str,
         Field(
             description="Full URL to a parquet file (s3://... or https://...)",
-            pattern=r"^(?:https://|s3://).+\.(?:parquet|nc)$",
+            pattern=r"^(?:https://|s3://).+\.parquet$",
         ),
     ],
     query: Annotated[
@@ -400,18 +400,20 @@ def create_plotly_chart_from_parquet_output_file_tool(
     title: Annotated[
         Optional[str],
         Field(description="Optional chart title."),
-    ] = None
+    ] = None,
 ) -> Dict[str, Any]:
     LOGGER.info(
         "Tool create_plotly_chart_from_parquet_output_file called (title=%s)",
         title
     )
-    return _get_json_raw("create_plotly_chart_from_parquet_output_file", params={
-        "s3_url": s3_url,
-        "query": query,
-        "title": title,
-    })
-
+    return _get_json_raw(
+        "create_plotly_chart_from_parquet_output_file",
+        params={
+            "s3_url": s3_url,
+            "query": query,
+            "title": title,
+        },
+    )
 
 @mcp.tool(
     name="query_hydrofabric_parquet_file",
