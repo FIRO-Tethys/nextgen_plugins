@@ -107,6 +107,10 @@ function getFirstPath(payload) {
     return null;
   }
 
+  if (typeof payload.selected_path === "string" && payload.selected_path) {
+    return payload.selected_path;
+  }
+
   const selected = payload.selected;
   if (selected && typeof selected === "object" && typeof selected.path === "string" && selected.path) {
     return selected.path;
@@ -384,9 +388,51 @@ export function toolCallSignature(toolName, args) {
   return `${toolName}|${argsBlob}`;
 }
 
+function normalizeToolError(errorValue) {
+  if (!errorValue) {
+    return null;
+  }
+
+  if (typeof errorValue === "string") {
+    return errorValue;
+  }
+
+  if (typeof errorValue === "object" && !Array.isArray(errorValue)) {
+    const message =
+      typeof errorValue.message === "string" && errorValue.message.trim()
+        ? errorValue.message.trim()
+        : null;
+    const code =
+      typeof errorValue.code === "string" && errorValue.code.trim()
+        ? errorValue.code.trim()
+        : null;
+
+    if (message && code) {
+      return `${code}: ${message}`;
+    }
+    if (message) {
+      return message;
+    }
+
+    try {
+      return JSON.stringify(errorValue);
+    } catch {
+      return String(errorValue);
+    }
+  }
+
+  return String(errorValue);
+}
+
 export function toolErrorText(toolResult) {
-  if (toolResult && typeof toolResult === "object" && !Array.isArray(toolResult) && toolResult.error) {
-    return String(toolResult.error);
+  if (toolResult && typeof toolResult === "object" && !Array.isArray(toolResult)) {
+    if (toolResult.ok === false) {
+      return normalizeToolError(toolResult.error) ?? "Tool returned ok=false";
+    }
+
+    if (toolResult.error) {
+      return normalizeToolError(toolResult.error);
+    }
   }
 
   if (typeof toolResult === "string") {
@@ -403,7 +449,7 @@ export function compactToolResultForContext(toolResult, maxItems = 50) {
   if (toolResult && typeof toolResult === "object" && !Array.isArray(toolResult)) {
     const compact = { ...toolResult };
 
-    if (compact.error) {
+    if (toolErrorText(compact)) {
       return compact;
     }
 
@@ -413,6 +459,9 @@ export function compactToolResultForContext(toolResult, maxItems = 50) {
         compact[key] = value.slice(0, maxItems);
         compact[`${key}_truncated`] = true;
         compact[`${key}_total`] = value.length;
+        if (typeof compact.count === "number") {
+          compact.count = compact[key].length;
+        }
       }
     }
 
@@ -426,6 +475,10 @@ export function compactToolResultForContext(toolResult, maxItems = 50) {
 
     if (Array.isArray(compact.files)) {
       compact.files_total = compact.files.length;
+    }
+
+    if (typeof compact.total_count !== "number" && typeof compact.count === "number") {
+      compact.total_count = compact.count;
     }
 
     return compact;

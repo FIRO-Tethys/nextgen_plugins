@@ -31,6 +31,14 @@ const OUTPUT_FILE_QUERY_TOOLS = new Set([
 ]);
 
 const HYDROFABRIC_QUERY_TOOL = "query_hydrofabric_parquet_file";
+const LIST_RESULT_TOOLS = new Set([
+  "list_available_models",
+  "list_available_dates",
+  "list_available_forecasts",
+  "list_available_cycles",
+  "list_available_vpus",
+  "list_available_output_files",
+]);
 
 
 
@@ -302,7 +310,7 @@ async function processToolCalls(toolCalls, messages, mcpClient, state) {
     }
 
     if (
-      ["list_available_dates", "list_available_models", "list_available_forecasts", "list_available_cycles", "list_available_vpus"].includes(toolName) &&
+      LIST_RESULT_TOOLS.has(toolName) &&
       toolResult &&
       typeof toolResult === "object" &&
       !toolErrorText(toolResult)
