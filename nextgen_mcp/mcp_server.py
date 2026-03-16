@@ -116,8 +116,8 @@ def list_available_dates_tool(
     raw = _prefer_id_objects(raw, "dates")
 
     dates = raw.get("dates") or []
-    filtered: list[dict[str, Any]] = []
 
+    filtered: list[dict[str, Any]] = []
     for item in dates:
         di = _date_from_item(item)
         if di is None:
@@ -125,7 +125,10 @@ def list_available_dates_tool(
         if start_date <= di <= end_date:
             filtered.append(item)
 
-    raw["dates"] = filtered[offset : (offset + limit) if limit else None] if (offset or limit) else filtered
+    if offset or limit:
+        filtered = filtered[offset : (offset + limit) if limit else None]
+
+    raw["dates"] = filtered
     return _prefer_id_objects(raw, "dates")
 
 @mcp.tool(

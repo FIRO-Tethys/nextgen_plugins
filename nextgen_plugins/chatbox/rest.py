@@ -196,6 +196,43 @@ def list_available_cycles(model, date, forecast) -> Dict:
                 "cycles": [],
             }
 
+def list_available_dates(model) -> Dict:
+    """List available dates for a given model."""
+    logger.info(f"Listing dates for model={model}")
+    s3_url = f"s3://{BUCKET}/{OUTPUTS_DIR}/{model}/{PREFIX_HYDROFABRIC}"
+
+    try:
+        fs = fsspec.filesystem("s3", anon=True)
+        dirs = fs.ls(s3_url, detail=False)
+
+        date_ids = [d.split("/")[-1].rstrip("/") for d in dirs]  # e.g. ngen.20260218
+        dates = []
+        for folder in date_ids:
+            yyyymmdd = _extract_yyyymmdd_from_date_folder(folder)
+            if yyyymmdd:
+                label = datetime.strptime(yyyymmdd, "%Y%m%d").date().isoformat()
+            else:
+                label = folder
+
+            dates.append({
+                "id": folder,
+                "label": label,
+            })
+
+        dates = sorted(dates, key=lambda x: x["label"], reverse=True)
+
+        logger.info(f"Found dates at {s3_url}: {[d['label'] for d in dates]}")
+        return {
+            "path": s3_url,
+            "dates": dates,
+        }
+    except FileNotFoundError:
+        logger.info(f"No dates found at {s3_url}")
+        return {
+            "path": s3_url,
+            "dates": [],
+        }
+
 def list_available_forecasts(model, date) -> Dict:
     """List available forecasts for a given model, date"""
     logger.info(f"Listing forecasts for model={model}, date={date}")
@@ -220,39 +257,6 @@ def list_available_forecasts(model, date) -> Dict:
                 "path": s3_url,
                 "forecasts": [],
             }
-
-def list_available_dates(model) -> Dict:
-    """List available dates for a given model."""
-    logger.info(f"Listing dates for model={model}")
-    s3_url = f"s3://{BUCKET}/{OUTPUTS_DIR}/{model}/{PREFIX_HYDROFABRIC}"
-
-    try:
-        fs = fsspec.filesystem("s3", anon=True)
-        dirs = fs.ls(s3_url, detail=False)
-
-        date_ids = [d.split("/")[-1].rstrip("/") for d in dirs]  # e.g. ngen.20260218
-        dates = []
-        for folder in date_ids:
-            yyyymmdd = _extract_yyyymmdd_from_date_folder(folder)
-            if yyyymmdd:
-                label = datetime.strptime(yyyymmdd, "%Y%m%d").date().isoformat()
-            else:
-                label = folder
-            dates.append({"id": folder, "label": label})
-
-        dates = sorted(dates, key=lambda x: x["label"], reverse=True)
-
-        logger.info(f"Found dates at {s3_url}: {[d['label'] for d in dates]}")
-        return {
-            "path": s3_url,
-            "dates": dates,
-        }
-    except FileNotFoundError:
-        logger.info(f"No dates found at {s3_url}")
-        return {
-            "path": s3_url,
-            "dates": [],
-        }
 
 def list_available_models() -> Dict:
     logger.info(f"Listing available models in bucket={BUCKET} under {OUTPUTS_DIR}")
