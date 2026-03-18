@@ -17,11 +17,14 @@ import {
   toolCallSignature,
   toolErrorText,
   maybeParseJson,
+  omitEmptyArgs
 } from "./chatboxHelpers";
 import { buildSystemMessage } from "./chatboxMessages";
 
 const DEFAULT_OLLAMA_HOST = (import.meta.env.VITE_OLLAMA_HOST ?? "http://localhost:11434").replace(/\/+$/, "");
 const DEFAULT_MCP_SERVER_URL = (import.meta.env.VITE_MCP_SERVER_URL ?? "/sse").trim();
+console.log("Default Ollama host:", DEFAULT_OLLAMA_HOST);
+console.log("Default MCP server URL:", DEFAULT_MCP_SERVER_URL);
 const MAX_TOOL_REPAIR_ATTEMPTS = Number.parseInt(import.meta.env.VITE_MCP_TOOL_REPAIR_ATTEMPTS ?? "0", 10);
 
 const OUTPUT_FILE_QUERY_TOOLS = new Set([
@@ -489,7 +492,7 @@ export async function runChatSession({
         }
 
         for (let attempt = 1; attempt <= MAX_TOOL_REPAIR_ATTEMPTS; attempt += 1) {
-          console.log(`Attempting tool call repair ${attempt}/${MAX_TOOL_REPAIR_ATTEMPTS} for signature:`, repeatedSignature);
+          console.log(`Attempting tool call repair ${attempt}/${MAX_TOOL_REPAIR_ATTEMPTS}`);
           messages.push(generateAutoFixToolMsg(lastErr, text, repeatedSignature));
 
           let repairResponse;

@@ -532,7 +532,7 @@ export async function listOllamaModels(ollamaHost = DEFAULT_OLLAMA_HOST) {
   );
 }
 
-function omitEmptyArgs(args) {
+export function omitEmptyArgs(args) {
   const cleaned = {};
   for (const [key, value] of Object.entries(args ?? {})) {
     if (value === null || value === undefined || value === "") {
