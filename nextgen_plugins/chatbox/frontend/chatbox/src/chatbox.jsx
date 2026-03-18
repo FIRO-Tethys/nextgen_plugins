@@ -1,6 +1,7 @@
 // chatbox.jsx
 import { useEffect, useMemo, useState } from "react";
-import { listOllamaModels, runChatSession } from "./chatboxEngine";
+import { runChatSession } from "./chatboxEngine";
+import { listOllamaModels } from "./chatboxHelpers";
 import MarkdownContent from "./markdownContent";
 import PlotlyChart from "./PlotlyChart";
 import FlowpathsPmtilesMap from "./FlowpathsPmtilesMap";
