@@ -17,6 +17,7 @@ from nextgen_plugins.chatbox.rest import (
     query_parquet_output_file,
     query_netcdf_output_file,
     create_plotly_chart_from_parquet_output_file,
+    create_plotly_chart_from_output_selector,
     query_hydrofabric_parquet_file,
     build_hydrofabric_feature_map_config
 )
@@ -75,6 +76,21 @@ def _get_json_raw(endpoint_key: str, params: Optional[Dict[str, Any]] = None, **
         return build_hydrofabric_feature_map_config(
             hydrofabric_id=p["hydrofabric_id"], 
         )
+    
+    if endpoint_key == "create_plotly_chart_from_output_selector":
+        return create_plotly_chart_from_output_selector(
+            model=p["model"],
+            date=p["date"],
+            forecast=p["forecast"],
+            cycle=p["cycle"],
+            vpu=p["vpu"],
+            query=p["query"],
+            title=p.get("title"),
+            ensemble=p.get("ensemble"),
+            file_name=p.get("file_name"),
+            index=p.get("index"),
+        )
+
     raise KeyError(f"Unknown endpoint_key: {endpoint_key}")
 
 

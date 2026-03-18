@@ -48,6 +48,29 @@ HYDROFABRIC_LAYER_CONFIG = {
     },
 }
 
+
+def _validate_nrds_output_file_url(bucket: str, file_url: str, allowed_exts: tuple[str, ...]) -> Optional[str]:
+    url = str(file_url or "").strip()
+    if not url:
+        return "Missing required query param: s3_url"
+
+    lower = url.lower()
+
+    if not lower.endswith(allowed_exts):
+        return f"s3_url must point to one file ending in {', '.join(allowed_exts)}"
+
+    allowed_prefixes = (
+        f"s3://{bucket.lower()}/",
+        f"https://{bucket.lower()}.s3.us-east-1.amazonaws.com/",
+    )
+    if not any(lower.startswith(prefix) for prefix in allowed_prefixes):
+        return f"s3_url must point to bucket {bucket}"
+
+    if "/outputs/" not in lower:
+        return "s3_url must point to an NRDS outputs file under /outputs/"
+
+    return None
+
 def _success_payload(**kwargs) -> Dict[str, Any]:
     return {
         "ok": True,

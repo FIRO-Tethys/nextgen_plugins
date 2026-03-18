@@ -17,7 +17,9 @@ import {
   toolCallSignature,
   toolErrorText,
   maybeParseJson,
-  omitEmptyArgs
+  omitEmptyArgs,
+  mergeToolCalls,
+  invalidOutputFileToolResult
 } from "./chatboxHelpers";
 import { buildSystemMessage } from "./chatboxMessages";
 
@@ -41,6 +43,11 @@ const LIST_RESULT_TOOLS = new Set([
   "list_available_cycles",
   "list_available_vpus",
   "list_available_output_files",
+]);
+
+const CHART_RESULT_TOOLS = new Set([
+  "create_plotly_chart_from_parquet_output_file",
+  "create_plotly_chart_from_output_selector",
 ]);
 
 
@@ -157,7 +164,7 @@ async function chatWithOptionalThinkingStream({
   const basePayload = {
     model,
     messages,
-    think: true,
+    think: Boolean(thinkingEnabled),
     tools,
     options: { temperature: 0 },
   };
@@ -211,7 +218,10 @@ async function chatWithOptionalThinkingStream({
     }
 
     if (Array.isArray(msg.tool_calls) && msg.tool_calls.length) {
-      mergedMessage.tool_calls = msg.tool_calls;
+      mergedMessage.tool_calls = mergeToolCalls(
+        mergedMessage.tool_calls ?? [],
+        msg.tool_calls
+      );
     }
 
     for (const key of [
@@ -272,14 +282,34 @@ async function processToolCalls(toolCalls, messages, mcpClient, state) {
 
     if (OUTPUT_FILE_QUERY_TOOLS.has(toolName)) {
       const currentS3 = typeof args?.s3_url === "string" ? args.s3_url : "";
+
       if (!isPlausibleOutputsFile(currentS3)) {
+        console.log(`Tool ${toolName} called with s3_url that doesn't look like a valid outputs file:`, { currentS3 });
         const fallback =
           toolName === "query_parquet_output_file" ||
-          toolName === "create_plotly_chart_from_parquet_output_file"
+          toolName === "create_plotly_chart_from_parquet_output_file" ||
+          toolName === "create_plotly_chart_from_output_selector"
             ? lastToolFileUrl(messages, [".parquet"])
             : lastToolFileUrl(messages, [".nc", ".nc4"]);
+
         if (fallback) {
+          console.log(`Using fallback s3_url for tool ${toolName}:`, { fallback });
           args.s3_url = fallback;
+        } else {
+          console.log(`No valid fallback s3_url found for tool ${toolName}. Returning error result.`);
+          const toolResult = invalidOutputFileToolResult(toolName, args);
+          const callSignature = toolCallSignature(toolName, args);
+
+          messages.push({
+            role: "tool",
+            tool_name: toolName,
+            content: JSON.stringify(toolResult),
+          });
+
+          hadError = true;
+          lastErr = toolErrorText(toolResult);
+          failedSignatures.push(callSignature);
+          continue;
         }
       }
 
@@ -303,8 +333,8 @@ async function processToolCalls(toolCalls, messages, mcpClient, state) {
           : JSON.stringify(toolResult)?.slice(0, 200),
     });
 
-    if (
-      toolName === "create_plotly_chart_from_parquet_output_file" &&
+    if (  
+      CHART_RESULT_TOOLS.has(toolName) &&
       toolResult &&
       typeof toolResult === "object" &&
       !toolErrorText(toolResult)

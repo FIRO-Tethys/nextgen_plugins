@@ -27,6 +27,7 @@ from .utils_rest import (
     _success_payload,
     _error_payload,
     _list_payload,
+    _validate_nrds_output_file_url
 )
 
 logger = logging.getLogger(__name__)
@@ -361,7 +362,17 @@ def query_netcdf_output_file(s3_url, query) -> Dict:
 
 def query_parquet_output_file(s3_url, query) -> Dict:
     """Run a read-only DuckDB query against a Parquet output file on S3 (view name: `output`)."""
-    file_url = s3_url
+
+    raw_url = str(s3_url or "").strip()
+    err = _validate_nrds_output_file_url(BUCKET,raw_url, (".parquet",))
+    if err:
+        return _error_payload(
+            "validation_error",
+            err,
+            file=raw_url,
+            query=query,
+        )
+    file_url = raw_url
     logger.info(f"Received query request for file: {file_url} with query: {query}")
     if file_url.startswith("s3://ciroh-community-ngen-datastream"):
         file_url = file_url.replace(
@@ -425,7 +436,16 @@ def query_parquet_output_file(s3_url, query) -> Dict:
 def create_plotly_chart_from_parquet_output_file(s3_url, query, title: str) -> Dict:
     """Run a read-only DuckDB query against a parquet output file on S3 and return Plotly chart JSON."""
     logger.info(f"Received request to create Plotly chart from file: {s3_url} with query: {query}")
-    file_url = s3_url
+    raw_url = str(s3_url or "").strip()
+    err = _validate_nrds_output_file_url(BUCKET, raw_url, (".parquet",))
+    if err:
+        return _error_payload(
+            "validation_error",
+            err,
+            file=raw_url,
+            query=query,
+        )
+    file_url = raw_url
     if file_url.startswith("s3://ciroh-community-ngen-datastream"):
         file_url = file_url.replace(
             "s3://ciroh-community-ngen-datastream",
@@ -496,6 +516,98 @@ def create_plotly_chart_from_parquet_output_file(s3_url, query, title: str) -> D
             query=query,
         )
 
+def create_plotly_chart_from_output_selector(
+    model,
+    date,
+    forecast,
+    cycle,
+    vpu,
+    query,
+    title: Optional[str] = None,
+    ensemble: Optional[str] = None,
+    file_name: Optional[str] = None,
+    index: Optional[int] = 0,
+) -> Dict:
+    """Resolve an output file by selector and create a Plotly chart from the selected parquet file."""
+
+    logger.info(
+        "Received request to create Plotly chart from selector with "
+        "model=%s date=%s forecast=%s cycle=%s vpu=%s ensemble=%s file_name=%s index=%s title=%s query=%s",
+        model,
+        date,
+        forecast,
+        cycle,
+        vpu,
+        ensemble,
+        file_name,
+        index,
+        title,
+        query,
+    )
+
+    resolved = get_output_file(
+        model=model,
+        date=date,
+        forecast=forecast,
+        cycle=cycle,
+        vpu=vpu,
+        file_name=file_name,
+        index=None if file_name is not None else (0 if index is None else index),
+        ensemble=ensemble,
+    )
+
+    if not isinstance(resolved, dict):
+        return _error_payload(
+            "execution_error",
+            "Unexpected response while resolving output file.",
+        )
+
+    if resolved.get("ok") is False:
+        return resolved
+
+    selected = resolved.get("selected")
+    if not selected:
+        return _error_payload(
+            "not_found",
+            "No output file matched the selector.",
+            dir=resolved.get("dir"),
+            count=resolved.get("count", 0),
+            selected=None,
+        )
+
+    selected_path = str((selected or {}).get("path") or "").strip()
+    if not selected_path:
+        return _error_payload(
+            "not_found",
+            "Resolved output file does not include a path.",
+            dir=resolved.get("dir"),
+            count=resolved.get("count", 0),
+            selected=selected,
+        )
+
+    if not selected_path.lower().endswith(".parquet"):
+        return _error_payload(
+            "validation_error",
+            "Selected output file is not a parquet file. Use a parquet file for chart creation.",
+            dir=resolved.get("dir"),
+            count=resolved.get("count", 0),
+            selected=selected,
+            file=selected_path,
+            query=query,
+        )
+
+    chart_result = create_plotly_chart_from_parquet_output_file(
+        s3_url=selected_path,
+        query=query,
+        title=title,
+    )
+
+    if isinstance(chart_result, dict):
+        chart_result.setdefault("dir", resolved.get("dir"))
+        chart_result.setdefault("count", resolved.get("count"))
+        chart_result.setdefault("selected", selected)
+
+    return chart_result
 
 def query_hydrofabric_parquet_file(hydrofabric_id: str, limit: int = 50) -> Dict:
     """Run a hydrofabric id lookup against the hydrofabric parquet file on S3."""

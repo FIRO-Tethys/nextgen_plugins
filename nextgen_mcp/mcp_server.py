@@ -24,23 +24,40 @@ from .validations import (
 )
 
 mcp = FastMCP("NRDS MCP Server")
-LOGGER = logging.getLogger(__name__)
+LOGGER = logging.getLogger("nextgen_mcp.mcp_server")
 
+def _preview_text(value: Optional[str], limit: int = 200) -> Optional[str]:
+    if value is None:
+        return None
+    text = str(value).replace("\n", " ").strip()
+    return text if len(text) <= limit else f"{text[:limit]}..."
 
 def _configure_runtime_logging() -> None:
     level_name = os.getenv("NRDS_LOG_LEVEL", "INFO").upper()
     level_value = getattr(logging, level_name, logging.INFO)
-    root_logger = logging.getLogger()
 
-    if not root_logger.handlers:
-        logging.basicConfig(
-            level=level_value,
-            format="%(asctime)s %(levelname)s %(name)s: %(message)s",
-        )
-    else:
-        root_logger.setLevel(level_value)
+    formatter = logging.Formatter(
+        "%(asctime)s %(levelname)s %(name)s: %(message)s"
+    )
 
+    # Configure this module logger explicitly so it always prints
+    stream_handler = logging.StreamHandler()
+    stream_handler.setLevel(level_value)
+    stream_handler.setFormatter(formatter)
+
+    LOGGER.handlers.clear()
+    LOGGER.addHandler(stream_handler)
+    LOGGER.setLevel(level_value)
+    LOGGER.propagate = False
+
+    # Optional: keep related loggers at the same level
     logging.getLogger("nextgen_plugins.chatbox.rest").setLevel(level_value)
+    logging.getLogger("mcp").setLevel(level_value)
+    logging.getLogger("mcp.server").setLevel(level_value)
+    logging.getLogger("mcp.server.lowlevel.server").setLevel(level_value)
+
+    LOGGER.info("Runtime logging configured with level=%s", level_name)
+
 
 # ---- Date bounds helpers (DEFAULT_START .. today in DEFAULT_TZ) ----
 _MIN_ALLOWED_DATE = _parse_iso_date(DEFAULT_START)
@@ -48,7 +65,21 @@ _MIN_ALLOWED_DATE = _parse_iso_date(DEFAULT_START)
 
 def _validate_date_bounds(d, field_name: str):
     today = datetime.now(DEFAULT_TZ).date()
+    LOGGER.debug(
+        "Validating date bounds for field=%s value=%s allowed_range=[%s, %s]",
+        field_name,
+        d,
+        _MIN_ALLOWED_DATE,
+        today,
+    )
     if d < _MIN_ALLOWED_DATE or d > today:
+        LOGGER.warning(
+            "Date validation failed for field=%s value=%s allowed_range=[%s, %s]",
+            field_name,
+            d,
+            _MIN_ALLOWED_DATE,
+            today,
+        )
         raise ValueError(
             f"'{field_name}' must be between {_MIN_ALLOWED_DATE} and {today} (got {d})"
         )
@@ -56,17 +87,28 @@ def _validate_date_bounds(d, field_name: str):
 
 
 def _parse_date_or_today(date_str: Optional[str], field_name: str):
+    LOGGER.debug("Parsing date for field=%s raw_value=%s", field_name, date_str)
     d = (
         _parse_iso_date(date_str)
         if date_str is not None
         else datetime.now(DEFAULT_TZ).date()
     )
-    return _validate_date_bounds(d, field_name)
+    validated = _validate_date_bounds(d, field_name)
+    LOGGER.debug("Parsed date for field=%s resolved_value=%s", field_name, validated)
+    return validated
+
 
 @mcp.tool(name="list_available_models", description="List available NRDS models. It should not have any arguments when called.")
 def list_available_models_tool() -> Dict[str, Any]:
+    LOGGER.info("Tool list_available_models called")
     raw = _get_json_raw("list_available_models")
-    return _prefer_id_objects(raw, "models")
+    result = _prefer_id_objects(raw, "models")
+    LOGGER.info(
+        "Tool list_available_models completed count=%s",
+        len((result.get("models") or [])) if isinstance(result, dict) else None,
+    )
+    return result
+
 
 @mcp.tool(
     name="list_available_dates",
@@ -103,10 +145,25 @@ def list_available_dates_tool(
         ),
     ] = None,
 ) -> Dict[str, Any]:
+    LOGGER.info(
+        "Tool list_available_dates called model=%s offset=%s limit=%s start=%s end=%s",
+        model,
+        offset,
+        limit,
+        start,
+        end,
+    )
+
     start_date = _validate_date_bounds(_parse_iso_date(start), "start")
     end_date = _parse_date_or_today(end, "end")
 
     if start_date > end_date:
+        LOGGER.warning(
+            "Invalid date range in list_available_dates model=%s start=%s end=%s",
+            model,
+            start_date,
+            end_date,
+        )
         raise ValueError(
             f"'start' must be <= 'end' (got start={start_date}, end={end_date})"
         )
@@ -133,7 +190,15 @@ def list_available_dates_tool(
     raw["count"] = len(filtered)
     raw["total_count"] = total_count
 
-    return _prefer_id_objects(raw, "dates")
+    result = _prefer_id_objects(raw, "dates")
+    LOGGER.info(
+        "Tool list_available_dates completed model=%s returned_count=%s total_filtered=%s",
+        model,
+        raw["count"],
+        total_count,
+    )
+    return result
+
 
 @mcp.tool(
     name="list_available_forecasts",
@@ -149,11 +214,20 @@ def list_available_forecasts_tool(
         ),
     ] = None,
 ) -> Dict[str, Any]:
+    LOGGER.info("Tool list_available_forecasts called model=%s date=%s", model, date)
     end_date = _parse_date_or_today(date, "date")
     raw = _get_json_raw(
         "list_available_forecasts", params={"model": model, "date": end_date.isoformat()}
     )
-    return _prefer_id_objects(raw, "forecasts")
+    result = _prefer_id_objects(raw, "forecasts")
+    LOGGER.info(
+        "Tool list_available_forecasts completed model=%s date=%s count=%s",
+        model,
+        end_date.isoformat(),
+        len((result.get("forecasts") or [])) if isinstance(result, dict) else None,
+    )
+    return result
+
 
 @mcp.tool(
     name="list_available_cycles",
@@ -177,12 +251,27 @@ def list_available_cycles_tool(
     ] = "short_range",
 ) -> Dict[str, Any]:
     forecast_id = _as_id(forecast)
+    LOGGER.info(
+        "Tool list_available_cycles called model=%s date=%s forecast=%s",
+        model,
+        date,
+        forecast_id,
+    )
     end_date = _parse_date_or_today(date, "date")
     raw = _get_json_raw(
         "list_available_cycles",
         params={"model": model, "date": end_date.isoformat(), "forecast": forecast_id},
     )
-    return _prefer_id_objects(raw, "cycles")
+    result = _prefer_id_objects(raw, "cycles")
+    LOGGER.info(
+        "Tool list_available_cycles completed model=%s date=%s forecast=%s count=%s",
+        model,
+        end_date.isoformat(),
+        forecast_id,
+        len((result.get("cycles") or [])) if isinstance(result, dict) else None,
+    )
+    return result
+
 
 @mcp.tool(
     name="list_available_vpus",
@@ -215,12 +304,28 @@ def list_available_vpus_tool(
     ] = "00",
 ) -> Dict[str, Any]:
     forecast_id = _as_id(forecast)
+    LOGGER.info(
+        "Tool list_available_vpus called model=%s date=%s forecast=%s cycle=%s",
+        model,
+        date,
+        forecast_id,
+        cycle,
+    )
     end_date = _parse_date_or_today(date, "date")
     raw = _get_json_raw(
         "list_available_vpus",
         params={"model": model, "date": end_date.isoformat(), "forecast": forecast_id, "cycle": cycle},
     )
-    return _prefer_id_objects(raw, "vpus")
+    result = _prefer_id_objects(raw, "vpus")
+    LOGGER.info(
+        "Tool list_available_vpus completed model=%s date=%s forecast=%s cycle=%s count=%s",
+        model,
+        end_date.isoformat(),
+        forecast_id,
+        cycle,
+        len((result.get("vpus") or [])) if isinstance(result, dict) else None,
+    )
+    return result
 
 
 @mcp.tool(
@@ -262,6 +367,15 @@ def list_available_output_files_tool(
         Optional[str], Field(description="Optional ensemble member (1 or 16)", pattern=r"^(?:1|16)$")
     ] = None,
 ) -> Dict[str, Any]:
+    LOGGER.info(
+        "Tool list_available_output_files called model=%s date=%s forecast=%s cycle=%s vpu=%s ensemble=%s",
+        model,
+        date,
+        _as_id(forecast),
+        cycle,
+        _as_id(vpu),
+        ensemble,
+    )
     end_date = _parse_date_or_today(date, "date")
     params: Dict[str, Any] = {
         "model": model,
@@ -274,7 +388,17 @@ def list_available_output_files_tool(
         params["ensemble"] = int(ensemble)
 
     raw = _get_json_raw("list_available_output_files", params=params)
-    return _prefer_id_objects(raw, "files")
+    result = _prefer_id_objects(raw, "files")
+    LOGGER.info(
+        "Tool list_available_output_files completed model=%s date=%s forecast=%s cycle=%s vpu=%s count=%s",
+        model,
+        end_date.isoformat(),
+        params["forecast"],
+        cycle,
+        params["vpu"],
+        len((result.get("files") or [])) if isinstance(result, dict) else None,
+    )
+    return result
 
 
 @mcp.tool(
@@ -306,9 +430,23 @@ def resolve_output_file_tool(
     index: Annotated[
         Optional[int],
         Field(description="0-based index into sorted file list", ge=0),
-    ] = None,
+    ] = 0,
 ) -> Dict[str, Any]:
+    LOGGER.info(
+        "Tool resolve_output_file called model=%s date=%s forecast=%s cycle=%s vpu=%s ensemble=%s file_name=%s index=%s",
+        model,
+        date,
+        _as_id(forecast),
+        cycle,
+        _as_id(vpu),
+        ensemble,
+        file_name,
+        index,
+    )
     if (file_name is None) == (index is None):
+        LOGGER.warning(
+            "Invalid resolve_output_file call: exactly one of file_name or index is required"
+        )
         raise ValueError("Provide exactly one of 'file_name' or 'index'.")
 
     end_date = _parse_date_or_today(date, "date")
@@ -326,7 +464,17 @@ def resolve_output_file_tool(
     if index is not None:
         params["index"] = index
 
-    return _get_json_raw("get_output_file", params=params)
+    result = _get_json_raw("get_output_file", params=params)
+    LOGGER.info(
+        "Tool resolve_output_file completed model=%s date=%s forecast=%s cycle=%s vpu=%s",
+        model,
+        end_date.isoformat(),
+        params["forecast"],
+        cycle,
+        params["vpu"],
+    )
+    return result
+
 
 @mcp.tool(
     name="query_parquet_output_file",
@@ -357,7 +505,15 @@ def query_parquet_output_file_tool(
         ),
     ],
 ) -> Dict[str, Any]:
-    return _get_json_raw("query_parquet_output_file", params={"s3_url": s3_url, "query": query})
+    LOGGER.info(
+        "Tool query_parquet_output_file called s3_url=%s query_preview=%s",
+        s3_url,
+        _preview_text(query),
+    )
+    result = _get_json_raw("query_parquet_output_file", params={"s3_url": s3_url, "query": query})
+    LOGGER.info("Tool query_parquet_output_file completed s3_url=%s", s3_url)
+    return result
+
 
 @mcp.tool(
     name="query_netcdf_output_file",
@@ -388,7 +544,15 @@ def query_netcdf_output_file_tool(
         ),
     ],
 ) -> Dict[str, Any]:
-    return _get_json_raw("query_netcdf_output_file", params={"s3_url": s3_url, "query": query})
+    LOGGER.info(
+        "Tool query_netcdf_output_file called s3_url=%s query_preview=%s",
+        s3_url,
+        _preview_text(query),
+    )
+    result = _get_json_raw("query_netcdf_output_file", params={"s3_url": s3_url, "query": query})
+    LOGGER.info("Tool query_netcdf_output_file completed s3_url=%s", s3_url)
+    return result
+
 
 @mcp.tool(
     name="create_plotly_chart_from_parquet_output_file",
@@ -425,14 +589,23 @@ def create_plotly_chart_from_parquet_output_file_tool(
     ] = None
 ) -> Dict[str, Any]:
     LOGGER.info(
-        "Tool create_plotly_chart_from_parquet_output_file called (title=%s)",
-        title
+        "Tool create_plotly_chart_from_parquet_output_file called s3_url=%s title=%s query_preview=%s",
+        s3_url,
+        title,
+        _preview_text(query),
     )
-    return _get_json_raw("create_plotly_chart_from_parquet_output_file", params={
+    result = _get_json_raw("create_plotly_chart_from_parquet_output_file", params={
         "s3_url": s3_url,
         "query": query,
         "title": title,
     })
+    LOGGER.info(
+        "Tool create_plotly_chart_from_parquet_output_file completed s3_url=%s title=%s",
+        s3_url,
+        title,
+    )
+    return result
+
 
 @mcp.tool(
     name="query_hydrofabric_parquet_file",
@@ -459,16 +632,22 @@ def query_hydrofabric_parquet_file(
         ),
     ] = 50,
 ) -> Dict[str, Any]:
-    """Lookup hydrofabric rows by id/divide_id."""
     LOGGER.info(
-        "Received request to query hydrofabric with hydrofabric_id=%s limit=%s",
+        "Tool query_hydrofabric_parquet_file called hydrofabric_id=%s limit=%s",
         hydrofabric_id,
         limit,
     )
-    return _get_json_raw(
+    result = _get_json_raw(
         "query_hydrofabric_parquet_file",
         params={"hydrofabric_id": hydrofabric_id, "limit": limit},
     )
+    LOGGER.info(
+        "Tool query_hydrofabric_parquet_file completed hydrofabric_id=%s limit=%s",
+        hydrofabric_id,
+        limit,
+    )
+    return result
+
 
 @mcp.tool(
     name="build_hydrofabric_feature_map_config",
@@ -485,11 +664,141 @@ def build_hydrofabric_feature_map_config(
         Field(description="Hydrofabric identifier to search in columns id and divide_id.")
     ]
 ) -> Dict[str, Any]:
-    LOGGER.info("Received request to build hydrofabric map config for hydrofabric_id=%s", hydrofabric_id)
-    return _get_json_raw(
+    LOGGER.info(
+        "Tool build_hydrofabric_feature_map_config called hydrofabric_id=%s",
+        hydrofabric_id,
+    )
+    result = _get_json_raw(
         "build_hydrofabric_feature_map_config",
         params={"hydrofabric_id": hydrofabric_id},
     )
+    LOGGER.info(
+        "Tool build_hydrofabric_feature_map_config completed hydrofabric_id=%s",
+        hydrofabric_id,
+    )
+    return result
+
+
+@mcp.tool(
+    name="create_plotly_chart_from_output_selector",
+    description=(
+        "Resolve a parquet output file from model/date/forecast/cycle/vpu and create a "
+        "Plotly-compatible line chart JSON in one step. "
+        "Use this for chart requests when you know model/date/forecast/cycle/vpu instead of a direct s3_url. "
+        "If file_name is provided it is used; otherwise index is used and defaults to 0 (the first sorted output file). "
+        "The selected file must be a parquet file. "
+        "The SQL query must be a single read-only SELECT or WITH...SELECT statement, must read FROM output, "
+        "and should return `time` plus at least one metric column such as flow, velocity, depth, or nudge."
+    ),
+)
+def create_plotly_chart_from_output_selector_tool(
+    model: Annotated[MODELS, Field(description="Model id")] = "cfe_nom",
+    date: Annotated[
+        Optional[str],
+        Field(description="YYYY-MM-DD or YYYY/MM/DD", pattern=DATE_PATTERN),
+    ] = None,
+    forecast: Annotated[FORECASTS, Field(description="Forecast id")] = "short_range",
+    cycle: Annotated[
+        str,
+        Field(
+            description="Cycle (00-23)",
+            pattern=r"^(?:[01]\d|2[0-3])$",
+        ),
+    ] = "00",
+    vpu: Annotated[
+        str,
+        Field(
+            description="VPU id or label (e.g. VPU_06, VPU 6, 6, VPU_03W, VPU 3W, 3W)"
+        ),
+    ] = "VPU_06",
+    query: Annotated[
+        str,
+        Field(
+            description=(
+                "DuckDB SQL query against table `output`. "
+                "Single read-only SELECT or WITH...SELECT statement only. Must read FROM output. "
+                "Chart queries should return `time` and one metric column such as flow, velocity, depth, or nudge."
+            ),
+            pattern=r"(?is)^\s*(?:WITH\b.*?\bSELECT\b|SELECT\b).*$",
+        ),
+    ] = "SELECT time, flow FROM output",
+    title: Annotated[
+        Optional[str],
+        Field(description="Optional chart title."),
+    ] = None,
+    ensemble: Annotated[
+        Optional[str],
+        Field(description="Optional ensemble member for medium_range.", pattern=r"^\d+$"),
+    ] = None,
+    file_name: Annotated[
+        Optional[str],
+        Field(
+            description=(
+                "Exact parquet filename to chart. If provided, it is used and index is ignored."
+            )
+        ),
+    ] = None,
+    index: Annotated[
+        Optional[int],
+        Field(
+            description=(
+                "0-based index into the sorted output file list. "
+                "Used only when file_name is not provided. Defaults to 0 (first file)."
+            ),
+            ge=0,
+        ),
+    ] = 0,
+) -> Dict[str, Any]:
+    LOGGER.info(
+        "Tool create_plotly_chart_from_output_selector called model=%s date=%s forecast=%s cycle=%s "
+        "vpu=%s ensemble=%s file_name=%s index=%s title=%s query_preview=%s",
+        model,
+        date,
+        _as_id(forecast),
+        cycle,
+        _as_id(vpu),
+        ensemble,
+        file_name,
+        index,
+        title,
+        _preview_text(query),
+    )
+
+    end_date = _parse_date_or_today(date, "date")
+    params: Dict[str, Any] = {
+        "model": model,
+        "date": end_date.isoformat(),
+        "forecast": _as_id(forecast),
+        "cycle": cycle,
+        "vpu": _as_id(vpu),
+        "query": query,
+    }
+
+    if title is not None:
+        params["title"] = title
+    if ensemble is not None:
+        params["ensemble"] = ensemble
+
+    if file_name is not None:
+        params["file_name"] = file_name
+    else:
+        params["index"] = 0 if index is None else index
+
+    result = _get_json_raw("create_plotly_chart_from_output_selector", params=params)
+
+    LOGGER.info(
+        "Tool create_plotly_chart_from_output_selector completed model=%s date=%s forecast=%s cycle=%s vpu=%s",
+        model,
+        end_date.isoformat(),
+        params["forecast"],
+        cycle,
+        params["vpu"],
+    )
+    LOGGER.info(
+        "create_plotly_chart_from_output_selector result: %s",
+        result)
+    return result
+
 
 CORS_MIDDLEWARE = [
     Middleware(
@@ -509,6 +818,7 @@ CORS_MIDDLEWARE = [
 
 if __name__ == "__main__":
     _configure_runtime_logging()
+    LOGGER.info("Starting NRDS MCP Server on 0.0.0.0:9000 with SSE transport")
     mcp.run(
         transport="sse",
         host="0.0.0.0",

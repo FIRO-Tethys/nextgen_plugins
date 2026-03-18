@@ -2,7 +2,6 @@
 import { AUTO_FIX_SYSTEM_MSG, FILE_MSG } from "./chatboxMessages";
 const DEFAULT_OLLAMA_HOST = (import.meta.env.VITE_OLLAMA_HOST ?? "http://localhost:11434").replace(/\/+$/, "");
 const URL_RE = /(https?:\/\/\S+|s3:\/\/\S+)/i;
-const PARQUET_NAME_RE = /\b([A-Za-z0-9._-]+\.parquet)\b/i;
 const FROM_TARGET_RE = /\bfrom\s+([^\s;]+)/i;
 const TOOL_ERROR_TOKENS = [
   "validation error",
@@ -13,6 +12,70 @@ const TOOL_ERROR_TOKENS = [
   "server error",
   "failed",
 ];
+
+export function invalidOutputFileToolResult(toolName, args) {
+  const file = typeof args?.s3_url === "string" ? args.s3_url : "";
+  return {
+    ok: false,
+    error: {
+      code: "invalid_s3_url",
+      message:
+        `${toolName} requires one real NRDS output file URL returned by ` +
+        `resolve_output_file or list_available_output_files, or explicitly ` +
+        `provided by the user. Got: ${file || "<missing>"}`,
+    },
+    file,
+    query: typeof args?.query === "string" ? args.query : "",
+  };
+}
+
+export function mergeToolCalls(existing = [], incoming = []) {
+  const merged = existing.map((call) => ({
+    ...call,
+    function: { ...(call?.function ?? {}) },
+  }));
+
+  incoming.forEach((call, index) => {
+    if (!call || typeof call !== "object") return;
+
+    const current = merged[index] ?? { function: {} };
+    const currentFn = current.function ?? {};
+    const nextFn = call.function ?? {};
+
+    const currArgs = currentFn.arguments;
+    const nextArgs = nextFn.arguments;
+
+    let mergedArgs = currArgs;
+
+    if (typeof currArgs === "string" && typeof nextArgs === "string") {
+      mergedArgs = currArgs + nextArgs;
+    } else if (
+      currArgs &&
+      typeof currArgs === "object" &&
+      !Array.isArray(currArgs) &&
+      nextArgs &&
+      typeof nextArgs === "object" &&
+      !Array.isArray(nextArgs)
+    ) {
+      mergedArgs = { ...currArgs, ...nextArgs };
+    } else if (nextArgs !== undefined) {
+      mergedArgs = nextArgs;
+    }
+
+    merged[index] = {
+      ...current,
+      ...call,
+      function: {
+        ...currentFn,
+        ...nextFn,
+        arguments: mergedArgs,
+      },
+    };
+  });
+
+  return merged;
+}
+
 export function maybeParseJson(value) {
   if (typeof value !== "string") {
     return value;
