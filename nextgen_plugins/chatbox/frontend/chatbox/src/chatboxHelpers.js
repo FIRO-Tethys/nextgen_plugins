@@ -678,8 +678,39 @@ export function compactToolResultForContext(toolResult, maxItems = 50) {
   return toolResult;
 }
 
-export async function listOllamaModels(ollamaHost = DEFAULT_OLLAMA_HOST) {
+function normalizeOllamaModelName(entry) {
+  if (typeof entry === "string" && entry.trim()) {
+    return entry.trim();
+  }
+  if (typeof entry?.name === "string" && entry.name.trim()) {
+    return entry.name.trim();
+  }
+  if (typeof entry?.model === "string" && entry.model.trim()) {
+    return entry.model.trim();
+  }
+  return "";
+}
+
+function canonicalOllamaModelKey(modelName) {
+  const normalized = normalizeOllamaModelName(modelName);
+  if (!normalized) {
+    return "";
+  }
+  return normalized.includes(":")
+    ? normalized.toLowerCase()
+    : `${normalized}:latest`.toLowerCase();
+}
+
+export async function listOllamaModels(ollamaHost = DEFAULT_OLLAMA_HOST, options = {}) {
   const host = String(ollamaHost ?? DEFAULT_OLLAMA_HOST).replace(/\/+$/, "");
+  const requiredCapabilities = Array.isArray(options?.requiredCapabilities)
+    ? options.requiredCapabilities
+        .map((capability) => String(capability ?? "").trim().toLowerCase())
+        .filter(Boolean)
+    : [];
+  const extraModels = Array.isArray(options?.extraModels)
+    ? options.extraModels.map((entry) => normalizeOllamaModelName(entry)).filter(Boolean)
+    : [];
   const response = await fetch(`${host}/api/tags`);
 
   if (!response.ok) {
@@ -691,21 +722,55 @@ export async function listOllamaModels(ollamaHost = DEFAULT_OLLAMA_HOST) {
     ? payload.models
     : [];
 
-  return Array.from(
-    new Set(
-      models
-        .map((entry) => {
-          if (typeof entry?.name === "string" && entry.name.trim()) {
-            return entry.name.trim();
-          }
-          if (typeof entry?.model === "string" && entry.model.trim()) {
-            return entry.model.trim();
-          }
-          return "";
-        })
-        .filter(Boolean)
-    )
+  const modelNames = Array.from(
+    [...models, ...extraModels]
+      .map((entry) => normalizeOllamaModelName(entry))
+      .filter(Boolean)
+      .reduce((deduped, modelName) => {
+        const canonicalKey = canonicalOllamaModelKey(modelName);
+        if (!canonicalKey || deduped.has(canonicalKey)) {
+          return deduped;
+        }
+        deduped.set(canonicalKey, modelName);
+        return deduped;
+      }, new Map())
+      .values()
   );
+
+  if (!requiredCapabilities.length) {
+    return modelNames;
+  }
+
+  const compatibleModels = await Promise.all(
+    modelNames.map(async (modelName) => {
+      try {
+        const showResponse = await fetch(`${host}/api/show`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ model: modelName }),
+        });
+
+        if (!showResponse.ok) {
+          console.warn(`Unable to inspect Ollama model capabilities for ${modelName}: ${showResponse.status}`);
+          return "";
+        }
+
+        const payload = await showResponse.json();
+        const capabilities = Array.isArray(payload?.capabilities)
+          ? payload.capabilities.map((capability) => String(capability ?? "").trim().toLowerCase())
+          : [];
+
+        return requiredCapabilities.every((capability) => capabilities.includes(capability))
+          ? modelName
+          : "";
+      } catch (error) {
+        console.warn(`Unable to inspect Ollama model capabilities for ${modelName}:`, error);
+        return "";
+      }
+    })
+  );
+
+  return compatibleModels.filter(Boolean);
 }
 
 export function omitEmptyArgs(args) {

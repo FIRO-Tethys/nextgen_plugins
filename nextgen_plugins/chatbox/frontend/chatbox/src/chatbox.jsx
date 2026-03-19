@@ -9,6 +9,8 @@ import ModelSelector from "./components/ModelSelector";
 import ThinkingSwitch from "./components/ThinkingSwitch";
 import "./chatbox.css";
 
+const REQUIRED_MODEL_CAPABILITIES = ["tools"];
+
 function ChatBox({ thinkingEnabled = true, model = "qwen3", modelOptions = [model], prompt = "" }) {
   const [messages, setMessages] = useState([]);
   const [input, setInput] = useState(prompt);
@@ -24,8 +26,8 @@ function ChatBox({ thinkingEnabled = true, model = "qwen3", modelOptions = [mode
     [modelOptions, model]
   );
   const availableModels = useMemo(
-    () => Array.from(new Set([...discoveredModels, ...configuredModels, selectedModel].filter(Boolean))),
-    [discoveredModels, configuredModels, selectedModel]
+    () => Array.from(new Set(discoveredModels.filter(Boolean))),
+    [discoveredModels]
   );
 
   useEffect(() => {
@@ -50,7 +52,10 @@ function ChatBox({ thinkingEnabled = true, model = "qwen3", modelOptions = [mode
     let cancelled = false;
     setLoadingModels(true);
 
-    listOllamaModels()
+    listOllamaModels(undefined, {
+      extraModels: configuredModels,
+      requiredCapabilities: REQUIRED_MODEL_CAPABILITIES,
+    })
       .then((models) => {
         if (!cancelled) {
           setDiscoveredModels(models);
@@ -68,7 +73,7 @@ function ChatBox({ thinkingEnabled = true, model = "qwen3", modelOptions = [mode
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [configuredModels]);
 
   useEffect(() => {
     if (!availableModels.length) {
