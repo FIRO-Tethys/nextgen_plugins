@@ -95,6 +95,12 @@
   padding: 0.75rem 0.9rem;
   text-align: left;
   max-width: 80%;
+  min-width: 0;
+}
+
+.chat-assistant.chat-bubble {
+  max-width: 100%;
+  flex: 1;
 }
 
 .chat-bubble p {
@@ -140,6 +146,14 @@
   border-radius: 8px;
   background: #fff7e8;
   font-size: 0.88rem;
+  width: 100%;
+  box-sizing: border-box;
+}
+
+.chat-map-wrapper,
+.chat-plot-wrapper {
+  width: 100%;
+  box-sizing: border-box;
 }
 
 .thinking-dropdown summary {
