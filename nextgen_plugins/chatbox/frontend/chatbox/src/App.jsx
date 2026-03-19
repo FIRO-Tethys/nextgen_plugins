@@ -10,7 +10,7 @@ function App() {
 
   return (
     <ChatBox
-      thinkingEnabled={true}
+      thinkingEnabled={false}
       model={defaultModel}
       modelOptions={fallbackModels}
       prompt=""

@@ -9,7 +9,7 @@ import "./chatbox.css";
 
 const REQUIRED_MODEL_CAPABILITIES = ["tools"];
 
-function ChatBox({ thinkingEnabled = true, model = "qwen3", modelOptions = [model], prompt = "" }) {
+function ChatBox({ thinkingEnabled = false, model = "qwen3", modelOptions = [model], prompt = "" }) {
   const [messages, setMessages] = useState([]);
   const [input, setInput] = useState(prompt);
   const [thinkingBuffer, setThinkingBuffer] = useState("");

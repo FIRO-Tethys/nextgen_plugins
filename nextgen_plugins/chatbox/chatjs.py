@@ -66,7 +66,7 @@ class NRDSChatJS(base.DataSource):
             "module": self.mfe_module,
             "remoteType": self.remoteType,
             "props": {
-                "thinkingEnabled": True ,
+                "thinkingEnabled": False,
                 "model": self.ollama_model,
                 "prompt": self.usr_msg,
             },
