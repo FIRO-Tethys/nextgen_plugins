@@ -48,6 +48,23 @@ HYDROFABRIC_LAYER_CONFIG = {
     },
 }
 
+def _normalize_output_file_url(s3_url: str) -> str:
+    file_url = str(s3_url or "").strip()
+    if file_url.startswith("s3://ciroh-community-ngen-datastream"):
+        file_url = file_url.replace(
+            "s3://ciroh-community-ngen-datastream",
+            "https://ciroh-community-ngen-datastream.s3.us-east-1.amazonaws.com",
+        )
+    return file_url
+
+
+def _detect_output_file_kind(file_url: str) -> Optional[str]:
+    lower = str(file_url or "").lower()
+    if lower.endswith(".parquet"):
+        return "parquet"
+    if lower.endswith(".nc") or lower.endswith(".nc4"):
+        return "netcdf"
+    return None
 
 def _validate_nrds_output_file_url(bucket: str, file_url: str, allowed_exts: tuple[str, ...]) -> Optional[str]:
     url = str(file_url or "").strip()

@@ -14,8 +14,8 @@ from nextgen_plugins.chatbox.rest import (
     list_available_vpus,
     list_available_output_files,
     get_output_file,
-    query_parquet_output_file,
-    query_netcdf_output_file,
+    query_output_file,
+    query_output_file_from_output_selector,
     create_plotly_chart_from_parquet_output_file,
     create_plotly_chart_from_output_selector,
     query_hydrofabric_parquet_file,
@@ -54,11 +54,27 @@ def _get_json_raw(endpoint_key: str, params: Optional[Dict[str, Any]] = None, **
             file_name=p.get("file_name"), index=p.get("index"), ensemble=p.get("ensemble")
         )
 
-    if endpoint_key == "query_parquet_output_file":
-        return query_parquet_output_file(s3_url=p["s3_url"], query=p["query"])
+    # if endpoint_key == "query_parquet_output_file":
+    #     return query_parquet_output_file(s3_url=p["s3_url"], query=p["query"])
 
-    if endpoint_key == "query_netcdf_output_file":
-        return query_netcdf_output_file(s3_url=p["s3_url"], query=p["query"])
+    # if endpoint_key == "query_netcdf_output_file":
+    #     return query_netcdf_output_file(s3_url=p["s3_url"], query=p["query"])
+    
+    if endpoint_key == "query_output_file":
+        return query_output_file(s3_url=p["s3_url"], query=p["query"])
+    
+    if endpoint_key == "query_output_file_from_output_selector":
+        return query_output_file_from_output_selector(
+            model=p["model"],
+            date=p["date"],
+            forecast=p["forecast"],
+            cycle=p["cycle"],
+            vpu=p["vpu"],
+            query=p["query"],
+            ensemble=p.get("ensemble"),
+            file_name=p.get("file_name"),
+            index=p.get("index"),
+        )
 
     if endpoint_key == "query_hydrofabric_parquet_file":
         return query_hydrofabric_parquet_file(

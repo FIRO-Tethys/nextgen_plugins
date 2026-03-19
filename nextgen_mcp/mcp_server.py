@@ -476,83 +476,228 @@ def resolve_output_file_tool(
     return result
 
 
+# @mcp.tool(
+#     name="query_parquet_output_file",
+#     description=(
+#         "Run a read-only DuckDB SQL query against ONE parquet output file in S3. "
+#         "The file is exposed as table `output` with schema: "
+#         "(time TIMESTAMP_NS, feature_id BIGINT, type VARCHAR, flow FLOAT, velocity FLOAT, depth FLOAT, nudge FLOAT). "
+#         "Query must be a single SELECT or WITH...SELECT statement and must read FROM output."
+#     ),
+# )
+# def query_parquet_output_file_tool(
+#     s3_url: Annotated[
+#         str,
+#         Field(
+#             description="Full URL to ONE parquet file (s3://... or https://...)",
+#             pattern=r"^(?:https://|s3://).+\.parquet$",
+#         ),
+#     ],
+#     query: Annotated[
+#         str,
+#         Field(
+#             description=(
+#                 "DuckDB SQL query against table `output`. "
+#                 "Single read-only SELECT or WITH...SELECT statement only. Must read FROM output. "
+#                 "Available columns: time, feature_id, type, flow, velocity, depth, nudge."
+#             ),
+#             pattern=r"(?is)^\s*(?:WITH\b.*?\bSELECT\b|SELECT\b).*$",
+#         ),
+#     ],
+# ) -> Dict[str, Any]:
+#     LOGGER.info(
+#         "Tool query_parquet_output_file called s3_url=%s query_preview=%s",
+#         s3_url,
+#         _preview_text(query),
+#     )
+#     result = _get_json_raw("query_parquet_output_file", params={"s3_url": s3_url, "query": query})
+#     LOGGER.info("Tool query_parquet_output_file completed s3_url=%s", s3_url)
+#     return result
+
+
+# @mcp.tool(
+#     name="query_netcdf_output_file",
+#     description=(
+#         "Run a read-only DuckDB SQL query against ONE netcdf output file in S3. "
+#         "The file is exposed as table `output` with schema: "
+#         "(time TIMESTAMP_NS, feature_id BIGINT, type VARCHAR, flow FLOAT, velocity FLOAT, depth FLOAT, nudge FLOAT). "
+#         "Query must be a single SELECT or WITH...SELECT statement and must read FROM output."
+#     ),
+# )
+# def query_netcdf_output_file_tool(
+#     s3_url: Annotated[
+#         str,
+#         Field(
+#             description="Full URL to ONE netcdf file (s3://... or https://...)",
+#             pattern=r"^(?:https://|s3://).+\.nc$",
+#         ),
+#     ],
+#     query: Annotated[
+#         str,
+#         Field(
+#             description=(
+#                 "DuckDB SQL query against table `output`. "
+#                 "Single read-only SELECT or WITH...SELECT statement only. Must read FROM output. "
+#                 "Available columns: time, feature_id, type, flow, velocity, depth, nudge."
+#             ),
+#             pattern=r"(?is)^\s*(?:WITH\b.*?\bSELECT\b|SELECT\b).*$",
+#         ),
+#     ],
+# ) -> Dict[str, Any]:
+#     LOGGER.info(
+#         "Tool query_netcdf_output_file called s3_url=%s query_preview=%s",
+#         s3_url,
+#         _preview_text(query),
+#     )
+#     result = _get_json_raw("query_netcdf_output_file", params={"s3_url": s3_url, "query": query})
+#     LOGGER.info("Tool query_netcdf_output_file completed s3_url=%s", s3_url)
+#     return result
+
 @mcp.tool(
-    name="query_parquet_output_file",
+    name="query_output_file_from_output_selector",
     description=(
-        "Run a read-only DuckDB SQL query against ONE parquet output file in S3. "
-        "The file is exposed as table `output` with schema: "
-        "(time TIMESTAMP_NS, feature_id BIGINT, type VARCHAR, flow FLOAT, velocity FLOAT, depth FLOAT, nudge FLOAT). "
-        "Query must be a single SELECT or WITH...SELECT statement and must read FROM output."
+        "Resolve one NRDS output file from model/date/forecast/cycle/vpu and run a read-only "
+        "DuckDB SQL query against it in one step. "
+        "Supports parquet (.parquet) and netcdf (.nc, .nc4). "
+        "Use this when you know model/date/forecast/cycle/vpu instead of a direct s3_url. "
+        "If file_name is provided it is used; otherwise index is used and defaults to 0 "
+        "(the first sorted output file). "
+        "The SQL query must be a single read-only SELECT or WITH...SELECT statement and must read FROM output."
     ),
 )
-def query_parquet_output_file_tool(
-    s3_url: Annotated[
+def query_output_file_from_output_selector_tool(
+    model: Annotated[MODELS, Field(description="Model id")] = "cfe_nom",
+    date: Annotated[
+        Optional[str],
+        Field(description="YYYY-MM-DD or YYYY/MM/DD", pattern=DATE_PATTERN),
+    ] = None,
+    forecast: Annotated[FORECASTS, Field(description="Forecast id")] = "short_range",
+    cycle: Annotated[
         str,
         Field(
-            description="Full URL to ONE parquet file (s3://... or https://...)",
-            pattern=r"^(?:https://|s3://).+\.parquet$",
+            description="Cycle (00-23)",
+            pattern=r"^(?:[01]\d|2[0-3])$",
         ),
-    ],
+    ] = "00",
+    vpu: Annotated[
+        str,
+        Field(
+            description="VPU id or label (e.g. VPU_06, VPU 6, 6, VPU_03W, VPU 3W, 3W)"
+        ),
+    ] = "VPU_06",
     query: Annotated[
         str,
         Field(
             description=(
                 "DuckDB SQL query against table `output`. "
-                "Single read-only SELECT or WITH...SELECT statement only. Must read FROM output. "
-                "Available columns: time, feature_id, type, flow, velocity, depth, nudge."
+                "Single read-only SELECT or WITH...SELECT statement only. Must read FROM output."
             ),
             pattern=r"(?is)^\s*(?:WITH\b.*?\bSELECT\b|SELECT\b).*$",
         ),
-    ],
+    ] = "SELECT * FROM output LIMIT 10",
+    ensemble: Annotated[
+        Optional[str],
+        Field(description="Optional ensemble member for medium_range.", pattern=r"^\d+$"),
+    ] = None,
+    file_name: Annotated[
+        Optional[str],
+        Field(
+            description=(
+                "Exact filename to query. If provided, it is used and index is ignored."
+            )
+        ),
+    ] = None,
+    index: Annotated[
+        Optional[int],
+        Field(
+            description=(
+                "0-based index into the sorted output file list. "
+                "Used only when file_name is not provided. Defaults to 0 (first file)."
+            ),
+            ge=0,
+        ),
+    ] = 0,
 ) -> Dict[str, Any]:
     LOGGER.info(
-        "Tool query_parquet_output_file called s3_url=%s query_preview=%s",
-        s3_url,
+        "Tool query_output_file_from_output_selector called model=%s date=%s forecast=%s cycle=%s "
+        "vpu=%s ensemble=%s file_name=%s index=%s query_preview=%s",
+        model,
+        date,
+        _as_id(forecast),
+        cycle,
+        _as_id(vpu),
+        ensemble,
+        file_name,
+        index,
         _preview_text(query),
     )
-    result = _get_json_raw("query_parquet_output_file", params={"s3_url": s3_url, "query": query})
-    LOGGER.info("Tool query_parquet_output_file completed s3_url=%s", s3_url)
+
+    end_date = _parse_date_or_today(date, "date")
+    params: Dict[str, Any] = {
+        "model": model,
+        "date": end_date.isoformat(),
+        "forecast": _as_id(forecast),
+        "cycle": cycle,
+        "vpu": _as_id(vpu),
+        "query": query,
+    }
+
+    if ensemble is not None:
+        params["ensemble"] = ensemble
+
+    if file_name is not None:
+        params["file_name"] = file_name
+    else:
+        params["index"] = 0 if index is None else index
+
+    result = _get_json_raw("query_output_file_from_output_selector", params=params)
+
+    LOGGER.info(
+        "Tool query_output_file_from_output_selector completed model=%s date=%s forecast=%s cycle=%s vpu=%s",
+        model,
+        end_date.isoformat(),
+        params["forecast"],
+        cycle,
+        params["vpu"],
+    )
+    LOGGER.info(
+        "query_output_file_from_output_selector result: %s",
+        result,
+    )
     return result
 
-
 @mcp.tool(
-    name="query_netcdf_output_file",
+    name="query_output_file",
     description=(
-        "Run a read-only DuckDB SQL query against ONE netcdf output file in S3. "
-        "The file is exposed as table `output` with schema: "
-        "(time TIMESTAMP_NS, feature_id BIGINT, type VARCHAR, flow FLOAT, velocity FLOAT, depth FLOAT, nudge FLOAT). "
-        "Query must be a single SELECT or WITH...SELECT statement and must read FROM output."
+        "Run a read-only DuckDB SQL query against ONE NRDS output file in S3. "
+        "Supports parquet (.parquet) and netcdf (.nc, .nc4). "
+        "The file is exposed as table `output`."
     ),
 )
-def query_netcdf_output_file_tool(
+def query_output_file_tool(
     s3_url: Annotated[
         str,
         Field(
-            description="Full URL to ONE netcdf file (s3://... or https://...)",
-            pattern=r"^(?:https://|s3://).+\.nc$",
+            description="Full URL to ONE parquet or netcdf output file (s3://... or https://...)",
+            pattern=r"^(?:https://|s3://).+\.(?:parquet|nc|nc4)$",
         ),
     ],
     query: Annotated[
         str,
         Field(
-            description=(
-                "DuckDB SQL query against table `output`. "
-                "Single read-only SELECT or WITH...SELECT statement only. Must read FROM output. "
-                "Available columns: time, feature_id, type, flow, velocity, depth, nudge."
-            ),
+            description="DuckDB SQL query against table `output`.",
             pattern=r"(?is)^\s*(?:WITH\b.*?\bSELECT\b|SELECT\b).*$",
         ),
     ],
 ) -> Dict[str, Any]:
     LOGGER.info(
-        "Tool query_netcdf_output_file called s3_url=%s query_preview=%s",
+        "Tool query_output_file called s3_url=%s query_preview=%s",
         s3_url,
         _preview_text(query),
     )
-    result = _get_json_raw("query_netcdf_output_file", params={"s3_url": s3_url, "query": query})
-    LOGGER.info("Tool query_netcdf_output_file completed s3_url=%s", s3_url)
+    result =  _get_json_raw("query_output_file", params={"s3_url": s3_url, "query": query})
+    LOGGER.info("Tool query_output_file completed s3_url=%s", s3_url)
     return result
-
 
 @mcp.tool(
     name="create_plotly_chart_from_parquet_output_file",

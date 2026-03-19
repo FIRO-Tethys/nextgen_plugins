@@ -1,8 +1,10 @@
 // chatboxHelpers.js
 import { AUTO_FIX_SYSTEM_MSG, FILE_MSG } from "./chatboxMessages";
+
 const DEFAULT_OLLAMA_HOST = (import.meta.env.VITE_OLLAMA_HOST ?? "http://localhost:11434").replace(/\/+$/, "");
 const URL_RE = /(https?:\/\/\S+|s3:\/\/\S+)/i;
 const FROM_TARGET_RE = /\bfrom\s+([^\s;]+)/i;
+
 const TOOL_ERROR_TOKENS = [
   "validation error",
   "error calling tool",
@@ -12,6 +14,92 @@ const TOOL_ERROR_TOKENS = [
   "server error",
   "failed",
 ];
+
+const SELECTOR_TOOLS = new Set([
+  "resolve_output_file",
+  "list_available_output_files",
+  "query_output_file_from_output_selector",
+  "create_plotly_chart_from_output_selector",
+]);
+
+export function denverTodayIso() {
+  const parts = new Intl.DateTimeFormat("en-US", {
+    timeZone: "America/Denver",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).formatToParts(new Date());
+
+  const map = Object.fromEntries(
+    parts
+      .filter((part) => part.type !== "literal")
+      .map((part) => [part.type, part.value])
+  );
+
+  return `${map.year}-${map.month}-${map.day}`;
+}
+
+export function stripThinkTags(text) {
+  if (typeof text !== "string") {
+    return "";
+  }
+
+  return text
+    .replace(/<think>[\s\S]*?<\/think>/gi, "")
+    .replace(/^submitButton\s*/i, "")
+    .trim();
+}
+
+function normalizeModelLiteral(value) {
+  const s = String(value ?? "").trim().toLowerCase();
+
+  if (s === "cfe nom" || s === "cfe-nom" || s === "cfe_nom") {
+    return "cfe_nom";
+  }
+  if (s === "routing only" || s === "routing-only" || s === "routing_only") {
+    return "routing_only";
+  }
+  if (s === "lstm") {
+    return "lstm";
+  }
+
+  return value;
+}
+
+function normalizeForecastLiteral(value) {
+  const s = String(value ?? "").trim().toLowerCase();
+
+  if (s === "short range" || s === "short-range" || s === "short_range") {
+    return "short_range";
+  }
+  if (s === "medium range" || s === "medium-range" || s === "medium_range") {
+    return "medium_range";
+  }
+  if (
+    s === "analysis assim extend" ||
+    s === "analysis-assim-extend" ||
+    s === "analysis_assim_extend"
+  ) {
+    return "analysis_assim_extend";
+  }
+
+  return value;
+}
+
+function normalizeVpuLiteral(value) {
+  const s = String(value ?? "").trim().toUpperCase();
+  const match = s.match(/(?:VPU[_\s-]*)?(\d{1,2})$/);
+
+  if (!match) {
+    return value;
+  }
+
+  return `VPU_${match[1].padStart(2, "0")}`;
+}
+
+function userAskedForToday(text) {
+  return /\btoday\b|\btoday's date\b/i.test(String(text ?? ""));
+}
 
 export function invalidOutputFileToolResult(toolName, args) {
   const file = typeof args?.s3_url === "string" ? args.s3_url : "";
@@ -99,6 +187,7 @@ export function maybeParseJson(value) {
 
   return value;
 }
+
 function sortObject(value) {
   if (Array.isArray(value)) {
     return value.map(sortObject);
@@ -163,7 +252,6 @@ function parseFirstJsonObject(text, startIndex) {
 
   return null;
 }
-
 
 function getFirstPath(payload) {
   if (!payload || typeof payload !== "object") {
@@ -342,7 +430,6 @@ export function extractInlineToolCalls(text) {
 
     const name = obj.name ?? obj.tool ?? obj.tool_name;
     const args = obj.parameters ?? obj.arguments ?? obj.params ?? obj.args;
-  
 
     if (
       typeof name === "string" &&
@@ -356,14 +443,19 @@ export function extractInlineToolCalls(text) {
   return [];
 }
 
-export function normalizeQueryToolArgs(toolName, args) {
+export function normalizeQueryToolArgs(toolName, args, originalUserText = "") {
   if (!args || typeof args !== "object" || Array.isArray(args)) {
     return args;
   }
 
-  const queryTools = new Set(["query_parquet_output_file", "query_netcdf_output_file", "create_plotly_chart_from_parquet_output_file"]);
-  if (queryTools.has(toolName)) {
-    const normalized = { ...args };
+  let normalized = { ...args };
+
+  const fileTools = new Set([
+    "query_output_file",
+    "create_plotly_chart_from_parquet_output_file",
+  ]);
+
+  if (fileTools.has(toolName)) {
     const s3Url = normalized.s3_url;
     const fileName = normalized.files_names ?? normalized.file_name ?? normalized.filename;
 
@@ -383,10 +475,32 @@ export function normalizeQueryToolArgs(toolName, args) {
         result[key] = normalized[key];
       }
     }
-    return result;
+    normalized = result;
   }
 
-  return args;
+  if (SELECTOR_TOOLS.has(toolName)) {
+    if (Object.prototype.hasOwnProperty.call(normalized, "model")) {
+      normalized.model = normalizeModelLiteral(normalized.model);
+    }
+
+    if (Object.prototype.hasOwnProperty.call(normalized, "forecast")) {
+      normalized.forecast = normalizeForecastLiteral(normalized.forecast);
+    }
+
+    if (Object.prototype.hasOwnProperty.call(normalized, "vpu")) {
+      normalized.vpu = normalizeVpuLiteral(normalized.vpu);
+    }
+
+    if (userAskedForToday(originalUserText)) {
+      normalized.date = denverTodayIso();
+    }
+  }
+
+  if (typeof normalized.query === "string") {
+    normalized.query = rewriteFromToOutput(normalized.query);
+  }
+
+  return normalized;
 }
 
 export function generateAutoFixToolMsg(lastErr, priorUserText = "", repeatedSignature = null) {
@@ -402,13 +516,13 @@ export function generateAutoFixToolMsg(lastErr, priorUserText = "", repeatedSign
       errLower.includes("provide one parquet s3_url"))
   ) {
     chainHints.push(
-      "Your previous query tool call used an invalid file URL. If you do not already have a full file URL, call a prerequisite tool first: resolve_output_file (preferred for ordinal output-file requests) or list_available_output_files. Then call query_* with one full file URL ending in .parquet or .nc/.nc4 (not a directory).",
+      "Your previous file-based tool call used an invalid file URL. If you do not already have a full file URL, call a prerequisite tool first: resolve_output_file (preferred for ordinal output-file requests) or list_available_output_files. If the original request already includes model/date/forecast/cycle/vpu selector inputs and does not require a direct s3_url, prefer selector tools such as query_output_file_from_output_selector or create_plotly_chart_from_output_selector.",
     );
   }
 
   if (repeatedSignature) {
     chainHints.push(
-      "You repeated the same failing tool call arguments. Do not repeat them. Call a prerequisite tool first, then issue a corrected query tool call.",
+      "You repeated the same failing tool call arguments. Do not repeat them. Call a prerequisite tool first or switch to the appropriate selector-based tool.",
     );
   }
 
@@ -429,6 +543,7 @@ export function generateFileMsg(fileUrl, fileType) {
     content: `Context: detected file URL ${fileUrl} (${fileType}). Use this exact file URL if a file-based tool call is needed.`,
   };
 }
+
 export function getMessage(resp) {
   if (!resp || typeof resp !== "object") {
     return {};
@@ -439,7 +554,6 @@ export function getMessage(resp) {
   }
   return message;
 }
-
 
 export function toolCallSignature(toolName, args) {
   let argsBlob = "";
@@ -564,7 +678,6 @@ export function compactToolResultForContext(toolResult, maxItems = 50) {
   return toolResult;
 }
 
-
 export async function listOllamaModels(ollamaHost = DEFAULT_OLLAMA_HOST) {
   const host = String(ollamaHost ?? DEFAULT_OLLAMA_HOST).replace(/\/+$/, "");
   const response = await fetch(`${host}/api/tags`);
@@ -605,57 +718,3 @@ export function omitEmptyArgs(args) {
   }
   return cleaned;
 }
-
-
-// export async function getContextLengthFromPs(modelName, ollamaHost, ollamaClient = null) {
-//   try {
-//     const client = ollamaClient ?? new Ollama({ host: ollamaHost });
-//     const payload = await client.ps();
-//     const models = Array.isArray(payload.models) ? payload.models : [];
-//     const direct = models.find(
-//       (model) => model?.name === modelName || model?.model === modelName,
-//     );
-//     if (direct && Number.isFinite(Number(direct.context_length))) {
-//       return Number(direct.context_length);
-//     }
-
-//     const base = String(modelName ?? "").split(":", 1)[0];
-//     const fallback = models.find((model) => {
-//       const nameBase = String(model?.name ?? "").split(":", 1)[0];
-//       const modelBase = String(model?.model ?? "").split(":", 1)[0];
-//       return nameBase === base || modelBase === base;
-//     });
-
-//     if (fallback && Number.isFinite(Number(fallback.context_length))) {
-//       return Number(fallback.context_length);
-//     }
-//   } catch {
-//     return null;
-//   }
-//   return null;
-// }
-
-// export async function printContextUsage(response, modelName, ollamaHost, ollamaClient = null) {
-//   const promptTokens = Number.isFinite(Number(response?.prompt_eval_count))
-//     ? Number(response.prompt_eval_count)
-//     : null;
-//   const outTokens = Number.isFinite(Number(response?.eval_count))
-//     ? Number(response.eval_count)
-//     : 0;
-
-//   const totalContext = await getContextLengthFromPs(modelName, ollamaHost, ollamaClient);
-
-//   if (totalContext && promptTokens !== null) {
-//     const leftAfterPrompt = Math.max(totalContext - promptTokens, 0);
-//     const usedNow = promptTokens + outTokens;
-//     const leftNow = Math.max(totalContext - usedNow, 0);
-//     console.debug(
-//       `Context: prompt ${promptTokens}/${totalContext} (left ${leftAfterPrompt}); output ${outTokens}; total ${usedNow}/${totalContext} (left ${leftNow})`,
-//     );
-//     return;
-//   }
-
-//   if (promptTokens !== null) {
-//     console.debug(`Tokens: prompt ${promptTokens}; output ${outTokens}`);
-//   }
-// }

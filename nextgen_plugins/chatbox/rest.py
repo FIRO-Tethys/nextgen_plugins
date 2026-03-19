@@ -27,7 +27,9 @@ from .utils_rest import (
     _success_payload,
     _error_payload,
     _list_payload,
-    _validate_nrds_output_file_url
+    _validate_nrds_output_file_url,
+    _detect_output_file_kind,
+    _normalize_output_file_url
 )
 
 logger = logging.getLogger(__name__)
@@ -293,78 +295,166 @@ def list_available_models() -> Dict:
         return _list_payload("models", [], path=s3_url)
 
 
-def query_netcdf_output_file(s3_url, query) -> Dict:
-    """Run a read-only DuckDB query against a netcdf output file on S3 (view name: `output`)."""
-    logger.info(f"Received request to query NetCDF file at {s3_url} with query: {query}")
-    file_url = s3_url
-    if file_url.startswith("s3://ciroh-community-ngen-datastream"):
-        file_url = file_url.replace(
-            "s3://ciroh-community-ngen-datastream",
-            "https://ciroh-community-ngen-datastream.s3.us-east-1.amazonaws.com",
-        )
+# def query_netcdf_output_file(s3_url, query) -> Dict:
+#     """Run a read-only DuckDB query against a netcdf output file on S3 (view name: `output`)."""
+#     logger.info(f"Received request to query NetCDF file at {s3_url} with query: {query}")
+#     file_url = s3_url
+#     if file_url.startswith("s3://ciroh-community-ngen-datastream"):
+#         file_url = file_url.replace(
+#             "s3://ciroh-community-ngen-datastream",
+#             "https://ciroh-community-ngen-datastream.s3.us-east-1.amazonaws.com",
+#         )
 
-    if not file_url:
-        logger.error("Missing required query param: s3_url")
-        return _error_payload(
-            "bad_request",
-            "Missing required query param: s3_url",
-        )
+#     if not file_url:
+#         logger.error("Missing required query param: s3_url")
+#         return _error_payload(
+#             "bad_request",
+#             "Missing required query param: s3_url",
+#         )
 
-    try:
-        query = validate_output_sql(query)
-    except ValueError as e:
-        logger.error(f"Invalid SQL query: {e}")
-        return _error_payload(
-            "validation_error",
-            str(e),
-            file=file_url,
-            query=query,
-        )
+#     try:
+#         query = validate_output_sql(query)
+#     except ValueError as e:
+#         logger.error(f"Invalid SQL query: {e}")
+#         return _error_payload(
+#             "validation_error",
+#             str(e),
+#             file=file_url,
+#             query=query,
+#         )
 
-    try:
-        initial_df = _get_troute_df(file_url)
-        logger.info(
-            f"Initial DataFrame loaded with {len(initial_df)} rows and columns: {initial_df.columns.tolist()}"
-        )
-        df = _duckdb_query_netcdf(initial_df, query)
+#     try:
+#         initial_df = _get_troute_df(file_url)
+#         logger.info(
+#             f"Initial DataFrame loaded with {len(initial_df)} rows and columns: {initial_df.columns.tolist()}"
+#         )
+#         df = _duckdb_query_netcdf(initial_df, query)
 
-        if "time" in df.columns:
-            df["time"] = pd.to_datetime(df["time"], errors="coerce").dt.strftime("%Y-%m-%dT%H:%M:%S.%fZ")
+#         if "time" in df.columns:
+#             df["time"] = pd.to_datetime(df["time"], errors="coerce").dt.strftime("%Y-%m-%dT%H:%M:%S.%fZ")
 
-        logger.info(f"Query returned {len(df)} rows and columns: {df.columns.tolist()}")
-        return _success_payload(
-            file=file_url,
-            query=query,
-            columns=list(df.columns),
-            rows=int(len(df)),
-            data=df.to_dict(orient="records"),
-        )
-    except FileNotFoundError:
-        logger.error(f"File not found: {file_url}")
-        return _error_payload(
-            "not_found",
-            f"File not found: {file_url}",
-            file=file_url,
-            query=query,
-            columns=[],
-            rows=0,
-            data=[],
-        )
-    except Exception as e:
-        logger.error(f"Error querying NetCDF file: {e}")
-        return _error_payload(
-            "execution_error",
-            str(e),
-            file=file_url,
-            query=query,
-        )
+#         logger.info(f"Query returned {len(df)} rows and columns: {df.columns.tolist()}")
+#         return _success_payload(
+#             file=file_url,
+#             query=query,
+#             columns=list(df.columns),
+#             rows=int(len(df)),
+#             data=df.to_dict(orient="records"),
+#         )
+#     except FileNotFoundError:
+#         logger.error(f"File not found: {file_url}")
+#         return _error_payload(
+#             "not_found",
+#             f"File not found: {file_url}",
+#             file=file_url,
+#             query=query,
+#             columns=[],
+#             rows=0,
+#             data=[],
+#         )
+#     except Exception as e:
+#         logger.error(f"Error querying NetCDF file: {e}")
+#         return _error_payload(
+#             "execution_error",
+#             str(e),
+#             file=file_url,
+#             query=query,
+#         )
 
+
+# def query_parquet_output_file(s3_url, query) -> Dict:
+#     """Run a read-only DuckDB query against a Parquet output file on S3 (view name: `output`)."""
+
+#     raw_url = str(s3_url or "").strip()
+#     err = _validate_nrds_output_file_url(BUCKET,raw_url, (".parquet",))
+#     if err:
+#         return _error_payload(
+#             "validation_error",
+#             err,
+#             file=raw_url,
+#             query=query,
+#         )
+#     file_url = raw_url
+#     logger.info(f"Received query request for file: {file_url} with query: {query}")
+#     if file_url.startswith("s3://ciroh-community-ngen-datastream"):
+#         file_url = file_url.replace(
+#             "s3://ciroh-community-ngen-datastream",
+#             "https://ciroh-community-ngen-datastream.s3.us-east-1.amazonaws.com",
+#         )
+
+#     if not file_url:
+#         logger.error("Missing required query param: s3_url")
+#         return _error_payload(
+#             "bad_request",
+#             "Missing required query param: s3_url",
+#         )
+
+#     try:
+#         query = validate_output_sql(query)
+#     except ValueError as e:
+#         logger.error(f"Invalid SQL query: {e}")
+#         return _error_payload(
+#             "validation_error",
+#             str(e),
+#             file=file_url,
+#             query=query,
+#         )
+
+#     try:
+#         df = _duckdb_query_parquet(file_url, query)
+
+#         if "time" in df.columns:
+#             df["time"] = pd.to_datetime(df["time"], errors="coerce").dt.strftime("%Y-%m-%dT%H:%M:%S.%fZ")
+
+#         logger.info(f"Query returned {len(df)} rows and columns: {df.columns.tolist()}")
+#         return _success_payload(
+#             file=file_url,
+#             query=query,
+#             columns=list(df.columns),
+#             rows=int(len(df)),
+#             data=df.to_dict(orient="records"),
+#         )
+#     except FileNotFoundError:
+#         logger.error(f"File not found: {file_url}")
+#         return _error_payload(
+#             "not_found",
+#             f"File not found: {file_url}",
+#             file=file_url,
+#             query=query,
+#             columns=[],
+#             rows=0,
+#             data=[],
+#         )
+#     except Exception as e:
+#         logger.error(f"Error querying Parquet file: {e}")
+#         return _error_payload(
+#             "execution_error",
+#             str(e),
+#             file=file_url,
+#             query=query,
+#         )
 
 def query_parquet_output_file(s3_url, query) -> Dict:
-    """Run a read-only DuckDB query against a Parquet output file on S3 (view name: `output`)."""
+    """Backward-compatible parquet wrapper."""
+    return query_output_file(s3_url=s3_url, query=query)
 
+
+def query_netcdf_output_file(s3_url, query) -> Dict:
+    """Backward-compatible netcdf wrapper."""
+    return query_output_file(s3_url=s3_url, query=query)
+
+def query_output_file(s3_url, query) -> Dict:
+    """Run a read-only DuckDB query against one NRDS output file in S3 (parquet or netcdf)."""
     raw_url = str(s3_url or "").strip()
-    err = _validate_nrds_output_file_url(BUCKET,raw_url, (".parquet",))
+    kind = _detect_output_file_kind(raw_url)
+
+    if kind == "parquet":
+        err = _validate_nrds_output_file_url(BUCKET, raw_url, (".parquet",))
+    elif kind == "netcdf":
+        err = _validate_nrds_output_file_url(BUCKET, raw_url, (".nc", ".nc4"))
+    else:
+        err = "s3_url must point to one .parquet, .nc, or .nc4 NRDS output file"
+
     if err:
         return _error_payload(
             "validation_error",
@@ -372,25 +462,14 @@ def query_parquet_output_file(s3_url, query) -> Dict:
             file=raw_url,
             query=query,
         )
-    file_url = raw_url
-    logger.info(f"Received query request for file: {file_url} with query: {query}")
-    if file_url.startswith("s3://ciroh-community-ngen-datastream"):
-        file_url = file_url.replace(
-            "s3://ciroh-community-ngen-datastream",
-            "https://ciroh-community-ngen-datastream.s3.us-east-1.amazonaws.com",
-        )
 
-    if not file_url:
-        logger.error("Missing required query param: s3_url")
-        return _error_payload(
-            "bad_request",
-            "Missing required query param: s3_url",
-        )
+    file_url = _normalize_output_file_url(raw_url)
+    logger.info("Received query request for %s file: %s with query: %s", kind, file_url, query)
 
     try:
         query = validate_output_sql(query)
     except ValueError as e:
-        logger.error(f"Invalid SQL query: {e}")
+        logger.error("Invalid SQL query: %s", e)
         return _error_payload(
             "validation_error",
             str(e),
@@ -399,39 +478,130 @@ def query_parquet_output_file(s3_url, query) -> Dict:
         )
 
     try:
-        df = _duckdb_query_parquet(file_url, query)
+        if kind == "parquet":
+            df = _duckdb_query_parquet(file_url, query)
+        else:
+            initial_df = _get_troute_df(file_url)
+            logger.info(
+                "Initial NetCDF DataFrame loaded with %s rows and columns: %s",
+                len(initial_df),
+                initial_df.columns.tolist(),
+            )
+            df = _duckdb_query_netcdf(initial_df, query)
 
         if "time" in df.columns:
             df["time"] = pd.to_datetime(df["time"], errors="coerce").dt.strftime("%Y-%m-%dT%H:%M:%S.%fZ")
 
-        logger.info(f"Query returned {len(df)} rows and columns: {df.columns.tolist()}")
+        logger.info("Query returned %s rows and columns: %s", len(df), df.columns.tolist())
         return _success_payload(
             file=file_url,
+            file_type=kind,
             query=query,
             columns=list(df.columns),
             rows=int(len(df)),
             data=df.to_dict(orient="records"),
         )
+
     except FileNotFoundError:
-        logger.error(f"File not found: {file_url}")
+        logger.error("File not found: %s", file_url)
         return _error_payload(
             "not_found",
             f"File not found: {file_url}",
             file=file_url,
+            file_type=kind,
             query=query,
             columns=[],
             rows=0,
             data=[],
         )
     except Exception as e:
-        logger.error(f"Error querying Parquet file: {e}")
+        logger.error("Error querying %s file: %s", kind, e)
         return _error_payload(
             "execution_error",
             str(e),
             file=file_url,
+            file_type=kind,
             query=query,
         )
 
+def query_output_file_from_output_selector(
+    model,
+    date,
+    forecast,
+    cycle,
+    vpu,
+    query,
+    ensemble: Optional[str] = None,
+    file_name: Optional[str] = None,
+    index: Optional[int] = 0,
+) -> Dict:
+    """Resolve an output file by selector and run a raw query against the selected parquet or netcdf file."""
+
+    logger.info(
+        "Received request to query output file from selector with "
+        "model=%s date=%s forecast=%s cycle=%s vpu=%s ensemble=%s file_name=%s index=%s query=%s",
+        model,
+        date,
+        forecast,
+        cycle,
+        vpu,
+        ensemble,
+        file_name,
+        index,
+        query,
+    )
+
+    resolved = get_output_file(
+        model=model,
+        date=date,
+        forecast=forecast,
+        cycle=cycle,
+        vpu=vpu,
+        file_name=file_name,
+        index=None if file_name is not None else (0 if index is None else index),
+        ensemble=ensemble,
+    )
+
+    if not isinstance(resolved, dict):
+        return _error_payload(
+            "execution_error",
+            "Unexpected response while resolving output file.",
+        )
+
+    if resolved.get("ok") is False:
+        return resolved
+
+    selected = resolved.get("selected")
+    if not selected:
+        return _error_payload(
+            "not_found",
+            "No output file matched the selector.",
+            dir=resolved.get("dir"),
+            count=resolved.get("count", 0),
+            selected=None,
+        )
+
+    selected_path = str((selected or {}).get("path") or "").strip()
+    if not selected_path:
+        return _error_payload(
+            "not_found",
+            "Resolved output file does not include a path.",
+            dir=resolved.get("dir"),
+            count=resolved.get("count", 0),
+            selected=selected,
+        )
+
+    query_result = query_output_file(
+        s3_url=selected_path,
+        query=query,
+    )
+
+    if isinstance(query_result, dict):
+        query_result.setdefault("dir", resolved.get("dir"))
+        query_result.setdefault("count", resolved.get("count"))
+        query_result.setdefault("selected", selected)
+
+    return query_result
 
 def create_plotly_chart_from_parquet_output_file(s3_url, query, title: str) -> Dict:
     """Run a read-only DuckDB query against a parquet output file on S3 and return Plotly chart JSON."""

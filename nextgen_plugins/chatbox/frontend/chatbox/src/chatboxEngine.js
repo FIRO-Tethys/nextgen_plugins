@@ -19,7 +19,8 @@ import {
   maybeParseJson,
   omitEmptyArgs,
   mergeToolCalls,
-  invalidOutputFileToolResult
+  invalidOutputFileToolResult,
+  stripThinkTags
 } from "./chatboxHelpers";
 import { buildSystemMessage } from "./chatboxMessages";
 
@@ -30,12 +31,17 @@ console.log("Default MCP server URL:", DEFAULT_MCP_SERVER_URL);
 const MAX_TOOL_REPAIR_ATTEMPTS = Number.parseInt(import.meta.env.VITE_MCP_TOOL_REPAIR_ATTEMPTS ?? "0", 10);
 
 const OUTPUT_FILE_QUERY_TOOLS = new Set([
-  "query_parquet_output_file",
-  "query_netcdf_output_file",
+  "query_output_file",
   "create_plotly_chart_from_parquet_output_file",
 ]);
 
+const QUERY_RESULT_TOOLS = new Set([
+  "query_output_file",
+  "query_output_file_from_output_selector",
+]);
+
 const HYDROFABRIC_QUERY_TOOL = "query_hydrofabric_parquet_file";
+
 const LIST_RESULT_TOOLS = new Set([
   "list_available_models",
   "list_available_dates",
@@ -45,12 +51,15 @@ const LIST_RESULT_TOOLS = new Set([
   "list_available_output_files",
 ]);
 
+const S3_URL_DEPENDENT_TOOLS = new Set([
+  "query_output_file",
+  "create_plotly_chart_from_parquet_output_file",
+]);
+
 const CHART_RESULT_TOOLS = new Set([
   "create_plotly_chart_from_parquet_output_file",
   "create_plotly_chart_from_output_selector",
 ]);
-
-
 
 function normalizeMcpSseUrl(serverUrl) {
   const raw = String(serverUrl ?? "").trim();
@@ -260,7 +269,7 @@ async function chatWithOptionalThinkingStream({
   return merged;
 }
 
-async function processToolCalls(toolCalls, messages, mcpClient, state) {
+async function processToolCalls(toolCalls, messages, mcpClient, state, originalUserText) {
   let hadError = false;
   let lastErr = null;
 
@@ -278,19 +287,17 @@ async function processToolCalls(toolCalls, messages, mcpClient, state) {
       }
     }
 
-    args = normalizeQueryToolArgs(toolName, args);
-
+    args = normalizeQueryToolArgs(toolName, args, originalUserText);
     if (OUTPUT_FILE_QUERY_TOOLS.has(toolName)) {
       const currentS3 = typeof args?.s3_url === "string" ? args.s3_url : "";
 
       if (!isPlausibleOutputsFile(currentS3)) {
         console.log(`Tool ${toolName} called with s3_url that doesn't look like a valid outputs file:`, { currentS3 });
+
         const fallback =
-          toolName === "query_parquet_output_file" ||
-          toolName === "create_plotly_chart_from_parquet_output_file" ||
-          toolName === "create_plotly_chart_from_output_selector"
-            ? lastToolFileUrl(messages, [".parquet"])
-            : lastToolFileUrl(messages, [".nc", ".nc4"]);
+          S3_URL_DEPENDENT_TOOLS.has(toolName)
+            ? lastToolFileUrl(messages, [".parquet", ".nc", ".nc4"])
+            : null;
 
         if (fallback) {
           console.log(`Using fallback s3_url for tool ${toolName}:`, { fallback });
@@ -333,13 +340,22 @@ async function processToolCalls(toolCalls, messages, mcpClient, state) {
           : JSON.stringify(toolResult)?.slice(0, 200),
     });
 
-    if (  
+    if (
       CHART_RESULT_TOOLS.has(toolName) &&
       toolResult &&
       typeof toolResult === "object" &&
       !toolErrorText(toolResult)
     ) {
       state.lastChartResult = toolResult;
+    }
+
+    if (
+      QUERY_RESULT_TOOLS.has(toolName) &&
+      toolResult &&
+      typeof toolResult === "object" &&
+      !toolErrorText(toolResult)
+    ) {
+      state.lastQueryResult = toolResult;
     }
 
     if (
@@ -399,6 +415,7 @@ export async function runChatSession({
 }) {
   const state = {
     lastChartResult: null,
+    lastQueryResult: null,
     lastListResult: null,
     lastMapResult: null,
     lastHydrofabricResult: null,
@@ -417,11 +434,6 @@ export async function runChatSession({
     "Tool names sent to Ollama:",
     (tools ?? []).map((t) => t?.function?.name)
   );
-
-  const plotlyTool = (tools ?? []).find(
-    (t) => t?.function?.name === "create_plotly_chart_from_parquet_output_file"
-  );
-  console.log("Plotly tool schema sent to Ollama:", plotlyTool);
 
   try {
     messages.push({ role: "user", content: text });
@@ -462,7 +474,9 @@ export async function runChatSession({
       }
 
       if (!toolCalls.length) {
-        const assistantText = typeof message.content === "string" ? message.content : "";
+        const assistantText = stripThinkTags(
+          typeof message.content === "string" ? message.content : ""
+        );
         const thinkingText = typeof message.thinking === "string" ? message.thinking : "";
 
         console.log("No tool calls found. Returning final assistant text.", {
@@ -475,18 +489,31 @@ export async function runChatSession({
         return { assistantText, messages };
       }
 
-      if (!Object.prototype.hasOwnProperty.call(message, "tool_calls")) {
-        message.tool_calls = toolCalls;
-      }
-      messages.push(message);
+      // if (!Object.prototype.hasOwnProperty.call(message, "tool_calls")) {
+      //   message.tool_calls = toolCalls;
+      // }
 
-      let { hadError, lastErr, failedSignatures } = await processToolCalls(toolCalls, messages, mcpClient, state);
+    //  messages.push(message);
+      messages.push({
+        role: "assistant",
+        content: stripThinkTags(typeof message.content === "string" ? message.content : ""),
+        tool_calls: toolCalls,
+      });
+
+      let { hadError, lastErr, failedSignatures } = await processToolCalls(toolCalls, messages, mcpClient, state, text);
 
       if (!hadError && state.lastChartResult) {
         console.log("Returning Plotly chart result from state:", state.lastChartResult);
         return {
           assistantText: "",
           plotlyFigure: state.lastChartResult.figure ?? state.lastChartResult,
+          messages,
+        };
+      }
+
+      if (!hadError && state.lastQueryResult) {
+        return {
+          assistantText: JSON.stringify(state.lastQueryResult),
           messages,
         };
       }
@@ -511,6 +538,18 @@ export async function runChatSession({
           assistantText: JSON.stringify(state.lastHydrofabricResult),
           messages,
         };
+      }
+
+      if (!hadError) {
+        messages.push({
+          role: "user",
+          content:
+            `Continue solving the original request using the tool result above. ` +
+            `Do not ask for clarification if enough information already exists. ` +
+            `If the original request already implies a SQL query, derive it and call the next tool now. ` +
+            `Original request: ${text}`,
+        });
+        continue;
       }
 
       if (hadError && lastErr) {
@@ -550,18 +589,29 @@ export async function runChatSession({
             continue;
           }
 
-          if (!Object.prototype.hasOwnProperty.call(repairMessage, "tool_calls")) {
-            repairMessage.tool_calls = repairCalls;
-          }
-          messages.push(repairMessage);
-
-          ({ hadError, lastErr, failedSignatures } = await processToolCalls(repairCalls, messages, mcpClient, state));
+          // if (!Object.prototype.hasOwnProperty.call(repairMessage, "tool_calls")) {
+          //   repairMessage.tool_calls = repairCalls;
+          // }
+          // messages.push(repairMessage);
+          messages.push({
+            role: "assistant",
+            content: stripThinkTags(typeof repairMessage.content === "string" ? repairMessage.content : ""),
+            tool_calls: repairCalls,
+          });
+          ({ hadError, lastErr, failedSignatures } = await processToolCalls(repairCalls, messages, mcpClient, state, text));
           repeatedSignature = bumpFailedSignatureCounts(failedSigCounts, failedSignatures);
 
           if (!hadError && state.lastChartResult) {
             return {
               assistantText: "",
               plotlyFigure: state.lastChartResult.figure ?? state.lastChartResult,
+              messages,
+            };
+          }
+
+          if (!hadError && state.lastQueryResult) {
+            return {
+              assistantText: JSON.stringify(state.lastQueryResult),
               messages,
             };
           }
@@ -589,6 +639,14 @@ export async function runChatSession({
           }
 
           if (!hadError) {
+            messages.push({
+              role: "user",
+              content:
+                `Continue solving the original request using the tool result above. ` +
+                `Do not ask for clarification if enough information already exists. ` +
+                `If the original request already implies a SQL query, derive it and call the next tool now. ` +
+                `Original request: ${text}`,
+            });
             break;
           }
         }
