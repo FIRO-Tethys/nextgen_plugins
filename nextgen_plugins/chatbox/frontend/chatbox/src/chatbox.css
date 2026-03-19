@@ -8,10 +8,6 @@
   font-size: 1.7rem;
 }
 
-.chat-header p {
-  margin: 0.4rem 0 0;
-  color: #2e5266;
-}
 
 .chat-controls {
   display: flex;
@@ -84,24 +80,36 @@
   color: #4e6573;
 }
 
-.thinking-panel {
+.thinking-dropdown {
+  margin: 0.4rem 0 0.5rem;
   border: 1px solid #d4bb8f;
-  border-radius: 12px;
-  padding: 0.8rem 0.9rem;
+  border-radius: 8px;
   background: #fff7e8;
+  font-size: 0.88rem;
 }
 
-.thinking-panel h2 {
-  margin: 0 0 0.5rem;
-  font-size: 1rem;
+.thinking-dropdown summary {
+  cursor: pointer;
+  padding: 0.4rem 0.7rem;
+  font-weight: 600;
+  color: #8a6d3b;
+  user-select: none;
 }
 
-.thinking-panel pre {
+.thinking-dropdown summary:hover {
+  color: #6b5230;
+}
+
+.thinking-dropdown pre {
   margin: 0;
+  padding: 0.5rem 0.7rem;
   white-space: pre-wrap;
   font-family: "JetBrains Mono", "SFMono-Regular", Menlo, Consolas, monospace;
-  font-size: 0.86rem;
+  font-size: 0.82rem;
   line-height: 1.4;
+  max-height: 300px;
+  overflow-y: auto;
+  border-top: 1px solid #e8d5b0;
 }
 
 .error-panel {

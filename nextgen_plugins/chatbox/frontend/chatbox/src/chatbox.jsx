@@ -14,7 +14,7 @@ const REQUIRED_MODEL_CAPABILITIES = ["tools"];
 function ChatBox({ thinkingEnabled = true, model = "qwen3", modelOptions = [model], prompt = "" }) {
   const [messages, setMessages] = useState([]);
   const [input, setInput] = useState(prompt);
-  const [thinking, setThinking] = useState("");
+  const [thinkingBuffer, setThinkingBuffer] = useState("");
   const [selectedModel, setSelectedModel] = useState(model);
   const [isThinkingEnabled, setIsThinkingEnabled] = useState(Boolean(thinkingEnabled));
   const [loading, setLoading] = useState(false);
@@ -44,7 +44,7 @@ function ChatBox({ thinkingEnabled = true, model = "qwen3", modelOptions = [mode
 
   useEffect(() => {
     if (!isThinkingEnabled) {
-      setThinking("");
+      setThinkingBuffer("");
     }
   }, [isThinkingEnabled]);
 
@@ -91,10 +91,12 @@ function ChatBox({ thinkingEnabled = true, model = "qwen3", modelOptions = [mode
     }
 
     setError("");
-    setThinking("");
+    setThinkingBuffer("");
     setLoading(true);
     setMessages((prev) => [...prev, { role: "user", content: userText }]);
     setInput("");
+
+    let accumulatedThinking = "";
 
     try {
       console.log(selectedModel)
@@ -106,7 +108,8 @@ function ChatBox({ thinkingEnabled = true, model = "qwen3", modelOptions = [mode
           if (!isThinkingEnabled || !chunk) {
             return;
           }
-          setThinking((prev) => prev + chunk);
+          accumulatedThinking += chunk;
+          setThinkingBuffer(accumulatedThinking);
         },
       });
 
@@ -117,10 +120,12 @@ function ChatBox({ thinkingEnabled = true, model = "qwen3", modelOptions = [mode
         {
           role: "assistant",
           content: result.assistantText || "",
+          thinking: accumulatedThinking || "",
           plotlyFigure: result.plotlyFigure ?? null,
           mapConfig: result.mapConfig ?? null,
         },
       ]);
+      setThinkingBuffer("");
     } catch (err) {
       console.log("Chat session error:", err);
       setError(String(err?.message ?? err));
@@ -133,9 +138,6 @@ function ChatBox({ thinkingEnabled = true, model = "qwen3", modelOptions = [mode
     <div className="chat-shell">
       <header className="chat-header">
         <h1>NextGen Chatbox</h1>
-        <p>
-          model=<code>{selectedModel}</code> | thinking=<code>{String(Boolean(isThinkingEnabled))}</code>
-        </p>
       </header>
 
       <section className="chat-controls">
@@ -163,6 +165,13 @@ function ChatBox({ thinkingEnabled = true, model = "qwen3", modelOptions = [mode
             >
               <strong>{message.role === "user" ? "You" : "Assistant"}</strong>
 
+              {message.role === "assistant" && message.thinking && (
+                <details className="thinking-dropdown">
+                  <summary>Thinking</summary>
+                  <pre>{message.thinking}</pre>
+                </details>
+              )}
+
               {message.mapConfig ? (
                 <div
                   className="chat-map-wrapper"
@@ -184,15 +193,19 @@ function ChatBox({ thinkingEnabled = true, model = "qwen3", modelOptions = [mode
           );
         })}
 
-        {loading && <p className="chat-status">Running...</p>}
+        {loading && (
+          <article className="chat-bubble chat-assistant">
+            <strong>Assistant</strong>
+            {isThinkingEnabled && thinkingBuffer && (
+              <details className="thinking-dropdown" open>
+                <summary>Thinking...</summary>
+                <pre>{thinkingBuffer}</pre>
+              </details>
+            )}
+            {!thinkingBuffer && <p className="chat-status">Running...</p>}
+          </article>
+        )}
       </section>
-
-      {isThinkingEnabled && thinking && (
-        <section className="thinking-panel">
-          <h2>Thinking Stream</h2>
-          <pre>{thinking}</pre>
-        </section>
-      )}
 
       {error && (
         <section className="error-panel">
