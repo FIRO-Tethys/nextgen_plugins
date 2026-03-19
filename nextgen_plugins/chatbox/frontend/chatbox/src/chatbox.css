@@ -98,11 +98,22 @@
   text-align: left;
   max-width: 80%;
   min-width: 0;
+  overflow: hidden;
 }
 
 .chat-assistant.chat-bubble {
   max-width: 100%;
   flex: 1;
+}
+
+.chat-bubble pre,
+.chat-bubble code,
+.chat-bubble .max-w-none,
+.chat-bubble .max-w-none > div,
+.chat-bubble .max-w-none span {
+  white-space: pre-wrap !important;
+  word-break: break-all !important;
+  overflow-wrap: break-word !important;
 }
 
 .chat-bubble p {
