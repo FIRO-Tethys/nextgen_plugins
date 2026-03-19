@@ -823,15 +823,15 @@ def build_hydrofabric_feature_map_config(
     )
     return result
 
-
 @mcp.tool(
     name="create_plotly_chart_from_output_selector",
     description=(
-        "Resolve a parquet output file from model/date/forecast/cycle/vpu and create a "
+        "Resolve one NRDS output file from model/date/forecast/cycle/vpu and create a "
         "Plotly-compatible line chart JSON in one step. "
+        "Supports parquet (.parquet) and netcdf (.nc, .nc4). "
         "Use this for chart requests when you know model/date/forecast/cycle/vpu instead of a direct s3_url. "
         "If file_name is provided it is used; otherwise index is used and defaults to 0 (the first sorted output file). "
-        "The selected file must be a parquet file. "
+        "The selected file may be parquet or netcdf. "
         "The SQL query must be a single read-only SELECT or WITH...SELECT statement, must read FROM output, "
         "and should return `time` plus at least one metric column such as flow, velocity, depth, or nudge."
     ),
@@ -943,7 +943,6 @@ def create_plotly_chart_from_output_selector_tool(
         "create_plotly_chart_from_output_selector result: %s",
         result)
     return result
-
 
 CORS_MIDDLEWARE = [
     Middleware(

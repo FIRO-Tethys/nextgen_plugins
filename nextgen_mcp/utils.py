@@ -19,7 +19,8 @@ from nextgen_plugins.chatbox.rest import (
     create_plotly_chart_from_parquet_output_file,
     create_plotly_chart_from_output_selector,
     query_hydrofabric_parquet_file,
-    build_hydrofabric_feature_map_config
+    build_hydrofabric_feature_map_config,
+    create_plotly_chart_from_output_file,
 )
 
 REST_API_HOST = os.getenv("NRDS_API_HOST", "http://localhost:8000/apps/nrds/api").rstrip("/")
@@ -53,12 +54,6 @@ def _get_json_raw(endpoint_key: str, params: Optional[Dict[str, Any]] = None, **
             model=p["model"], date=p["date"], forecast=p["forecast"], cycle=p["cycle"], vpu=p["vpu"],
             file_name=p.get("file_name"), index=p.get("index"), ensemble=p.get("ensemble")
         )
-
-    # if endpoint_key == "query_parquet_output_file":
-    #     return query_parquet_output_file(s3_url=p["s3_url"], query=p["query"])
-
-    # if endpoint_key == "query_netcdf_output_file":
-    #     return query_netcdf_output_file(s3_url=p["s3_url"], query=p["query"])
     
     if endpoint_key == "query_output_file":
         return query_output_file(s3_url=p["s3_url"], query=p["query"])
@@ -82,12 +77,19 @@ def _get_json_raw(endpoint_key: str, params: Optional[Dict[str, Any]] = None, **
             limit=p["limit"]
         )
     
-    if endpoint_key == "create_plotly_chart_from_parquet_output_file":
-        return create_plotly_chart_from_parquet_output_file(
+    if endpoint_key == "create_plotly_chart_from_output_file":
+        return create_plotly_chart_from_output_file(
             s3_url=p["s3_url"],
             query=p["query"],
             title=p.get("title"),
         )
+    
+    # if endpoint_key == "create_plotly_chart_from_parquet_output_file":
+    #     return create_plotly_chart_from_parquet_output_file(
+    #         s3_url=p["s3_url"],
+    #         query=p["query"],
+    #         title=p.get("title"),
+    #     )
     if endpoint_key == "build_hydrofabric_feature_map_config":
         return build_hydrofabric_feature_map_config(
             hydrofabric_id=p["hydrofabric_id"], 

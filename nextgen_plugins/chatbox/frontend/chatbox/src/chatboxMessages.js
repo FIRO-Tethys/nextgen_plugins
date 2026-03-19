@@ -206,7 +206,7 @@ export const AUTO_FIX_SYSTEM_MSG = [
   "- For raw output data requests from parquet or NetCDF files with a direct file URL, use query_output_file with arguments exactly: {s3_url, query}.",
   "- For raw output data requests using model/date/forecast/cycle/vpu selector inputs, use query_output_file_from_output_selector with its selector arguments plus query.",
   "- For parquet chart requests with a direct file URL, use create_plotly_chart_from_parquet_output_file with arguments exactly: {s3_url, query}.",
-  "- For selector-based parquet chart requests, use create_plotly_chart_from_output_selector with its selector arguments plus query.",
+  "- For selector-based chart requests against NRDS output files, use create_plotly_chart_from_output_selector with its selector arguments plus query. This selector tool supports parquet and NetCDF output files.",
   "- If selector inputs already exist in the request and no direct file URL is required, prefer selector tools over resolve_output_file + another tool.",
   "- If the user asked for a chart, plot, graph, visualization, or line chart, do not call query_output_file or query_output_file_from_output_selector first.",
   "- For chart requests, the correct selector-based tool is create_plotly_chart_from_output_selector.",

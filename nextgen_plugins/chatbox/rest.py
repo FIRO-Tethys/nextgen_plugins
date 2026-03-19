@@ -603,9 +603,109 @@ def query_output_file_from_output_selector(
 
     return query_result
 
-def create_plotly_chart_from_parquet_output_file(s3_url, query, title: str) -> Dict:
-    """Run a read-only DuckDB query against a parquet output file on S3 and return Plotly chart JSON."""
-    logger.info(f"Received request to create Plotly chart from file: {s3_url} with query: {query}")
+def create_plotly_chart_from_output_file(s3_url, query, title: Optional[str] = None) -> Dict:
+    """Run a read-only DuckDB query against one NRDS output file in S3 (parquet or netcdf)
+    and return Plotly chart JSON.
+    """
+    raw_url = str(s3_url or "").strip()
+    kind = _detect_output_file_kind(raw_url)
+
+    if kind == "parquet":
+        err = _validate_nrds_output_file_url(BUCKET, raw_url, (".parquet",))
+    elif kind == "netcdf":
+        err = _validate_nrds_output_file_url(BUCKET, raw_url, (".nc", ".nc4"))
+    else:
+        err = "s3_url must point to one .parquet, .nc, or .nc4 NRDS output file"
+
+    if err:
+        return _error_payload(
+            "validation_error",
+            err,
+            file=raw_url,
+            query=query,
+        )
+
+    file_url = _normalize_output_file_url(raw_url)
+    logger.info(
+        "Received request to create Plotly chart from %s file: %s with query: %s",
+        kind,
+        file_url,
+        query,
+    )
+
+    try:
+        query = validate_output_sql(query)
+    except ValueError as e:
+        logger.error("Invalid SQL query for chart: %s", e)
+        return _error_payload(
+            "validation_error",
+            str(e),
+            file=file_url,
+            file_type=kind,
+            query=query,
+        )
+
+    try:
+        if kind == "parquet":
+            df = _duckdb_query_parquet(file_url, query)
+        else:
+            initial_df = _get_troute_df(file_url)
+            logger.info(
+                "Initial NetCDF DataFrame loaded with %s rows and columns: %s",
+                len(initial_df),
+                initial_df.columns.tolist(),
+            )
+            df = _duckdb_query_netcdf(initial_df, query)
+
+        if "time" in df.columns:
+            df["time"] = pd.to_datetime(df["time"], errors="coerce").dt.strftime("%Y-%m-%dT%H:%M:%S.%fZ")
+
+        logger.info("Chart query returned %s rows and columns: %s", len(df), df.columns.tolist())
+        fig = _create_plotly_chart(df=df, title=title)
+
+        if isinstance(fig, dict) and fig.get("error"):
+            return _error_payload(
+                "validation_error",
+                fig["error"],
+                file=file_url,
+                file_type=kind,
+                query=query,
+                columns=list(df.columns),
+                rows=int(len(df)),
+            )
+
+        return _success_payload(
+            file=file_url,
+            file_type=kind,
+            query=query,
+            columns=list(df.columns),
+            rows=int(len(df)),
+            figure=fig,
+        )
+
+    except FileNotFoundError:
+        logger.error("File not found: %s", file_url)
+        return _error_payload(
+            "not_found",
+            f"File not found: {file_url}",
+            file=file_url,
+            file_type=kind,
+            query=query,
+            columns=[],
+            rows=0,
+        )
+    except Exception as e:
+        logger.error("Error creating chart from %s file: %s", kind, e)
+        return _error_payload(
+            "execution_error",
+            str(e),
+            file=file_url,
+            file_type=kind,
+            query=query,
+        )
+
+def create_plotly_chart_from_parquet_output_file(s3_url, query, title: Optional[str] = None) -> Dict:
+    """Backward-compatible parquet-only chart wrapper."""
     raw_url = str(s3_url or "").strip()
     err = _validate_nrds_output_file_url(BUCKET, raw_url, (".parquet",))
     if err:
@@ -615,76 +715,12 @@ def create_plotly_chart_from_parquet_output_file(s3_url, query, title: str) -> D
             file=raw_url,
             query=query,
         )
-    file_url = raw_url
-    if file_url.startswith("s3://ciroh-community-ngen-datastream"):
-        file_url = file_url.replace(
-            "s3://ciroh-community-ngen-datastream",
-            "https://ciroh-community-ngen-datastream.s3.us-east-1.amazonaws.com",
-        )
 
-    if not file_url:
-        logger.error("Missing required query param: s3_url")
-        return _error_payload(
-            "bad_request",
-            "Missing required query param: s3_url",
-        )
-
-    try:
-        query = validate_output_sql(query)
-    except ValueError as e:
-        logger.error(f"Invalid SQL query for chart: {e}")
-        return _error_payload(
-            "validation_error",
-            str(e),
-            file=file_url,
-            query=query,
-        )
-
-    try:
-        df = _duckdb_query_parquet(file_url, query)
-
-        if "time" in df.columns:
-            df["time"] = pd.to_datetime(df["time"], errors="coerce").dt.strftime("%Y-%m-%dT%H:%M:%S.%fZ")
-
-        logger.info(f"Chart returned {len(df)} rows and columns: {df.columns.tolist()}")
-        fig = _create_plotly_chart(df=df, title=title)
-
-        if isinstance(fig, dict) and fig.get("error"):
-            return _error_payload(
-                "validation_error",
-                fig["error"],
-                file=file_url,
-                query=query,
-                columns=list(df.columns),
-                rows=int(len(df)),
-            )
-
-        return _success_payload(
-            file=file_url,
-            query=query,
-            columns=list(df.columns),
-            rows=int(len(df)),
-            figure=fig,
-        )
-
-    except FileNotFoundError:
-        logger.error(f"File not found: {file_url}")
-        return _error_payload(
-            "not_found",
-            f"File not found: {file_url}",
-            file=file_url,
-            query=query,
-            columns=[],
-            rows=0,
-        )
-    except Exception as e:
-        logger.error(f"Error querying Parquet file for chart: {e}")
-        return _error_payload(
-            "execution_error",
-            str(e),
-            file=file_url,
-            query=query,
-        )
+    return create_plotly_chart_from_output_file(
+        s3_url=raw_url,
+        query=query,
+        title=title,
+    )
 
 def create_plotly_chart_from_output_selector(
     model,
@@ -698,8 +734,7 @@ def create_plotly_chart_from_output_selector(
     file_name: Optional[str] = None,
     index: Optional[int] = 0,
 ) -> Dict:
-    """Resolve an output file by selector and create a Plotly chart from the selected parquet file."""
-
+    """Resolve an output file by selector and create a Plotly chart from the selected parquet or netcdf file."""
     logger.info(
         "Received request to create Plotly chart from selector with "
         "model=%s date=%s forecast=%s cycle=%s vpu=%s ensemble=%s file_name=%s index=%s title=%s query=%s",
@@ -755,18 +790,7 @@ def create_plotly_chart_from_output_selector(
             selected=selected,
         )
 
-    if not selected_path.lower().endswith(".parquet"):
-        return _error_payload(
-            "validation_error",
-            "Selected output file is not a parquet file. Use a parquet file for chart creation.",
-            dir=resolved.get("dir"),
-            count=resolved.get("count", 0),
-            selected=selected,
-            file=selected_path,
-            query=query,
-        )
-
-    chart_result = create_plotly_chart_from_parquet_output_file(
+    chart_result = create_plotly_chart_from_output_file(
         s3_url=selected_path,
         query=query,
         title=title,
