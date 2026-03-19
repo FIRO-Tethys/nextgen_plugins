@@ -170,6 +170,7 @@ async function chatWithOptionalThinkingStream({
   onThinkingChunk,
   onContentChunk,
   ollamaClient,
+  signal,
 }) {
   console.log("Starting chat with Ollama. Thinking enabled:", thinkingEnabled, "Model:", model);
   const basePayload = {
@@ -212,6 +213,9 @@ async function chatWithOptionalThinkingStream({
   };
 
   for await (const chunk of responseStream) {
+    if (signal?.aborted) {
+      break;
+    }
     const msg = chunk?.message && typeof chunk.message === "object" ? chunk.message : {};
 
     if (typeof msg.thinking === "string" && msg.thinking) {
@@ -410,6 +414,7 @@ export async function runChatSession({
   thinkingEnabled,
   onThinkingChunk,
   onContentChunk,
+  signal,
   ollamaHost = DEFAULT_OLLAMA_HOST,
   mcpServerUrl = DEFAULT_MCP_SERVER_URL,
 }) {
@@ -447,6 +452,10 @@ export async function runChatSession({
     const failedSigCounts = {};
 
     while (true) {
+      if (signal?.aborted) {
+        return { assistantText: "", messages, aborted: true };
+      }
+
       console.log("About to call Ollama with messages summary:", messages.slice(-4).map((m) => ({
         role: m.role,
         tool_name: m.tool_name,
@@ -463,6 +472,7 @@ export async function runChatSession({
         onThinkingChunk,
         onContentChunk,
         ollamaClient,
+        signal,
       });
 
       console.log("Received response from Ollama:", response);
@@ -575,6 +585,7 @@ export async function runChatSession({
               onThinkingChunk,
               onContentChunk,
               ollamaClient,
+              signal,
             });
           } catch (error) {
             lastErr = `Ollama error during repair attempt ${attempt}: ${String(error?.message ?? error)}`;

@@ -29,6 +29,11 @@ function ChatBox({ thinkingEnabled = true, model = "qwen3", modelOptions = [mode
     [discoveredModels]
   );
   const chatLogRef = useRef(null);
+  const abortRef = useRef(null);
+
+  const stopGeneration = () => {
+    abortRef.current?.abort();
+  };
 
   useEffect(() => {
     const el = chatLogRef.current;
@@ -104,6 +109,8 @@ function ChatBox({ thinkingEnabled = true, model = "qwen3", modelOptions = [mode
 
     let accumulatedThinking = "";
     let accumulatedContent = "";
+    const controller = new AbortController();
+    abortRef.current = controller;
 
     try {
       console.log(selectedModel)
@@ -111,6 +118,7 @@ function ChatBox({ thinkingEnabled = true, model = "qwen3", modelOptions = [mode
         prompt: userText,
         model: selectedModel,
         thinkingEnabled: isThinkingEnabled,
+        signal: controller.signal,
         onThinkingChunk: (chunk) => {
           if (!isThinkingEnabled || !chunk) {
             return;
@@ -127,11 +135,15 @@ function ChatBox({ thinkingEnabled = true, model = "qwen3", modelOptions = [mode
 
       console.log("Chat session completed with result:", result);
 
+      const content = result.aborted
+        ? (accumulatedContent || "(Stopped)")
+        : (result.assistantText || "");
+
       setMessages((prev) => [
         ...prev,
         {
           role: "assistant",
-          content: result.assistantText || "",
+          content,
           thinking: accumulatedThinking || "",
           plotlyFigure: result.plotlyFigure ?? null,
           mapConfig: result.mapConfig ?? null,
@@ -143,16 +155,104 @@ function ChatBox({ thinkingEnabled = true, model = "qwen3", modelOptions = [mode
       console.log("Chat session error:", err);
       setError(String(err?.message ?? err));
     } finally {
+      abortRef.current = null;
       setLoading(false);
     }
   };
 
-  return (
-    <div className="chat-shell">
-      <header className="chat-header">
-        <h1>NextGen Chatbox</h1>
-      </header>
+  const hasMessages = messages.length > 0 || loading;
 
+  const inputBar = (
+    <section className="chat-input-bar">
+      <textarea
+        value={input}
+        onChange={(event) => setInput(event.target.value)}
+        placeholder={`Message ${selectedModel || "assistant"}...`}
+        onKeyDown={(event) => {
+          if (event.key === "Enter" && !event.shiftKey) {
+            event.preventDefault();
+            void sendMessage();
+          }
+        }}
+        rows={1}
+      />
+      <div className="chat-input-toolbar">
+        <div className="chat-input-toggles">
+          <button
+            type="button"
+            className={`chat-pill-btn ${isThinkingEnabled ? "pill-active" : ""}`}
+            onClick={() => setIsThinkingEnabled((v) => !v)}
+            disabled={loading}
+          >
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M12 2a7 7 0 0 1 7 7c0 2.4-1.2 4.5-3 5.7V17a2 2 0 0 1-2 2h-4a2 2 0 0 1-2-2v-2.3C6.2 13.5 5 11.4 5 9a7 7 0 0 1 7-7z"/>
+              <line x1="10" y1="22" x2="14" y2="22"/>
+            </svg>
+            Thinking
+          </button>
+          <select
+            className="chat-model-select"
+            value={selectedModel}
+            onChange={(event) => setSelectedModel(event.target.value)}
+            disabled={loading || loadingModels || !availableModels.length}
+          >
+            {availableModels.length ? (
+              availableModels.map((opt) => (
+                <option key={opt} value={opt}>{opt}</option>
+              ))
+            ) : (
+              <option value="">{loadingModels ? "Loading..." : "No models"}</option>
+            )}
+          </select>
+        </div>
+        {loading ? (
+          <button
+            type="button"
+            className="chat-send-btn chat-stop-btn"
+            onClick={stopGeneration}
+            aria-label="Stop generation"
+          >
+            <svg width="14" height="14" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+              <rect x="4" y="4" width="16" height="16" rx="2" fill="#ffffff" />
+            </svg>
+          </button>
+        ) : (
+          <button
+            type="button"
+            className="chat-send-btn"
+            onClick={() => void sendMessage()}
+            disabled={!input.trim()}
+            aria-label="Send message"
+          >
+            <svg width="18" height="18" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+              <path d="M12 3L4 11h5v8h6v-8h5L12 3z" fill="#ffffff" />
+            </svg>
+          </button>
+        )}
+      </div>
+    </section>
+  );
+
+  if (!hasMessages) {
+    return (
+      <div className="chat-shell chat-shell-welcome">
+        <div className="chat-welcome">
+          <div className="chat-welcome-logo">
+            <svg width="48" height="48" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+              <path d="M1 18c1.5-1.5 3.5-2 5-2s3 1 4 2 2.5 2 4 2 3.5-.5 5-2" stroke="#1f7db8" strokeWidth="2" strokeLinecap="round"/>
+              <path d="M1 14c1.5-1.5 3.5-2 5-2s3 1 4 2 2.5 2 4 2 3.5-.5 5-2" stroke="#1f7db8" strokeWidth="2" strokeLinecap="round" opacity="0.5"/>
+              <path d="M12 3v7M9 6l3-3 3 3" stroke="#1f7db8" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+            </svg>
+          </div>
+          <h1>How can I help you?</h1>
+        </div>
+        {inputBar}
+      </div>
+    );
+  }
+
+  return (
+    <div className="chat-shell chat-shell-conversation">
       <section className="chat-log" ref={chatLogRef}>
         {messages.map((message, index) => {
           const isUser = message.role === "user";
@@ -216,61 +316,7 @@ function ChatBox({ thinkingEnabled = true, model = "qwen3", modelOptions = [mode
         </section>
       )}
 
-      <section className="chat-input-bar">
-        <textarea
-          value={input}
-          onChange={(event) => setInput(event.target.value)}
-          placeholder={`Message ${selectedModel || "assistant"}...`}
-          onKeyDown={(event) => {
-            if (event.key === "Enter" && !event.shiftKey) {
-              event.preventDefault();
-              void sendMessage();
-            }
-          }}
-          rows={1}
-        />
-        <div className="chat-input-toolbar">
-          <div className="chat-input-toggles">
-            <button
-              type="button"
-              className={`chat-pill-btn ${isThinkingEnabled ? "pill-active" : ""}`}
-              onClick={() => setIsThinkingEnabled((v) => !v)}
-              disabled={loading}
-            >
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                <path d="M12 2a7 7 0 0 1 7 7c0 2.4-1.2 4.5-3 5.7V17a2 2 0 0 1-2 2h-4a2 2 0 0 1-2-2v-2.3C6.2 13.5 5 11.4 5 9a7 7 0 0 1 7-7z"/>
-                <line x1="10" y1="22" x2="14" y2="22"/>
-              </svg>
-              Thinking
-            </button>
-            <select
-              className="chat-model-select"
-              value={selectedModel}
-              onChange={(event) => setSelectedModel(event.target.value)}
-              disabled={loading || loadingModels || !availableModels.length}
-            >
-              {availableModels.length ? (
-                availableModels.map((opt) => (
-                  <option key={opt} value={opt}>{opt}</option>
-                ))
-              ) : (
-                <option value="">{loadingModels ? "Loading..." : "No models"}</option>
-              )}
-            </select>
-          </div>
-          <button
-            type="button"
-            className="chat-send-btn"
-            onClick={() => void sendMessage()}
-            disabled={loading || !input.trim()}
-            aria-label="Send message"
-          >
-            <svg width="18" height="18" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
-              <path d="M12 3L4 11h5v8h6v-8h5L12 3z" fill="#ffffff" />
-            </svg>
-          </button>
-        </div>
-      </section>
+      {inputBar}
     </div>
   );
 }
