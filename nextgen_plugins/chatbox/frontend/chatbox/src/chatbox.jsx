@@ -15,6 +15,7 @@ function ChatBox({ thinkingEnabled = true, model = "qwen3", modelOptions = [mode
   const [messages, setMessages] = useState([]);
   const [input, setInput] = useState(prompt);
   const [thinkingBuffer, setThinkingBuffer] = useState("");
+  const [contentBuffer, setContentBuffer] = useState("");
   const [selectedModel, setSelectedModel] = useState(model);
   const [isThinkingEnabled, setIsThinkingEnabled] = useState(Boolean(thinkingEnabled));
   const [loading, setLoading] = useState(false);
@@ -92,11 +93,13 @@ function ChatBox({ thinkingEnabled = true, model = "qwen3", modelOptions = [mode
 
     setError("");
     setThinkingBuffer("");
+    setContentBuffer("");
     setLoading(true);
     setMessages((prev) => [...prev, { role: "user", content: userText }]);
     setInput("");
 
     let accumulatedThinking = "";
+    let accumulatedContent = "";
 
     try {
       console.log(selectedModel)
@@ -110,6 +113,11 @@ function ChatBox({ thinkingEnabled = true, model = "qwen3", modelOptions = [mode
           }
           accumulatedThinking += chunk;
           setThinkingBuffer(accumulatedThinking);
+        },
+        onContentChunk: (chunk) => {
+          if (!chunk) return;
+          accumulatedContent += chunk;
+          setContentBuffer(accumulatedContent);
         },
       });
 
@@ -126,6 +134,7 @@ function ChatBox({ thinkingEnabled = true, model = "qwen3", modelOptions = [mode
         },
       ]);
       setThinkingBuffer("");
+      setContentBuffer("");
     } catch (err) {
       console.log("Chat session error:", err);
       setError(String(err?.message ?? err));
@@ -197,12 +206,16 @@ function ChatBox({ thinkingEnabled = true, model = "qwen3", modelOptions = [mode
           <article className="chat-bubble chat-assistant">
             <strong>Assistant</strong>
             {isThinkingEnabled && thinkingBuffer && (
-              <details className="thinking-dropdown" open>
+              <details className="thinking-dropdown" open={!contentBuffer}>
                 <summary>Thinking...</summary>
                 <pre>{thinkingBuffer}</pre>
               </details>
             )}
-            {!thinkingBuffer && <p className="chat-status">Running...</p>}
+            {contentBuffer ? (
+              <MarkdownContent content={contentBuffer} />
+            ) : (
+              !thinkingBuffer && <p className="chat-status">Running...</p>
+            )}
           </article>
         )}
       </section>

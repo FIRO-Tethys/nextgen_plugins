@@ -168,6 +168,7 @@ async function chatWithOptionalThinkingStream({
   model,
   thinkingEnabled,
   onThinkingChunk,
+  onContentChunk,
   ollamaClient,
 }) {
   console.log("Starting chat with Ollama. Thinking enabled:", thinkingEnabled, "Model:", model);
@@ -178,10 +179,6 @@ async function chatWithOptionalThinkingStream({
     tools,
     options: { temperature: 0, num_ctx: 16384 },
   };
-
-  if (!thinkingEnabled) {
-    return ollamaClient.chat({ ...basePayload, stream: false });
-  }
 
   const responseStream = await ollamaClient.chat({ ...basePayload, stream: true });
 
@@ -225,6 +222,7 @@ async function chatWithOptionalThinkingStream({
 
     if (typeof msg.content === "string" && msg.content) {
       mergedMessage.content += msg.content;
+      onContentChunk?.(msg.content);
     }
 
     if (Array.isArray(msg.tool_calls) && msg.tool_calls.length) {
@@ -411,6 +409,7 @@ export async function runChatSession({
   model,
   thinkingEnabled,
   onThinkingChunk,
+  onContentChunk,
   ollamaHost = DEFAULT_OLLAMA_HOST,
   mcpServerUrl = DEFAULT_MCP_SERVER_URL,
 }) {
@@ -462,6 +461,7 @@ export async function runChatSession({
         model,
         thinkingEnabled,
         onThinkingChunk,
+        onContentChunk,
         ollamaClient,
       });
 
@@ -573,6 +573,7 @@ export async function runChatSession({
               model,
               thinkingEnabled,
               onThinkingChunk,
+              onContentChunk,
               ollamaClient,
             });
           } catch (error) {
