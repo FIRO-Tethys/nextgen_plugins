@@ -16,7 +16,6 @@ from nextgen_plugins.chatbox.rest import (
     get_output_file,
     query_output_file,
     query_output_file_from_output_selector,
-    create_plotly_chart_from_parquet_output_file,
     create_plotly_chart_from_output_selector,
     query_hydrofabric_parquet_file,
     build_hydrofabric_feature_map_config,

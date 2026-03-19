@@ -170,12 +170,13 @@ async function chatWithOptionalThinkingStream({
   onThinkingChunk,
   ollamaClient,
 }) {
+  console.log("Starting chat with Ollama. Thinking enabled:", thinkingEnabled, "Model:", model);
   const basePayload = {
     model,
     messages,
     think: Boolean(thinkingEnabled),
     tools,
-    options: { temperature: 0 },
+    options: { temperature: 0, num_ctx: 16384 },
   };
 
   if (!thinkingEnabled) {

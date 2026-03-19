@@ -97,6 +97,7 @@ function ChatBox({ thinkingEnabled = true, model = "qwen3", modelOptions = [mode
     setInput("");
 
     try {
+      console.log(selectedModel)
       const result = await runChatSession({
         prompt: userText,
         model: selectedModel,
