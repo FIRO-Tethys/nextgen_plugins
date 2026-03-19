@@ -32,15 +32,46 @@
   background: linear-gradient(145deg, #f7fbff, #ecf5fb);
 }
 
+.chat-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.5rem;
+}
+
+.chat-row-user {
+  flex-direction: row-reverse;
+}
+
+.chat-row-assistant {
+  flex-direction: row;
+}
+
+.chat-avatar {
+  flex-shrink: 0;
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin-top: 2px;
+}
+
+.avatar-user {
+  background: #1f7db8;
+  color: #ffffff;
+}
+
+.avatar-bot {
+  background: #6b7b8d;
+  color: #ffffff;
+}
+
 .chat-bubble {
   border-radius: 12px;
   padding: 0.75rem 0.9rem;
   text-align: left;
-}
-
-.chat-bubble strong {
-  display: block;
-  margin-bottom: 0.25rem;
+  max-width: 80%;
 }
 
 .chat-bubble p {
@@ -121,33 +152,52 @@
 }
 
 .chat-input {
-  display: grid;
-  gap: 0.7rem;
+  position: relative;
 }
 
 .chat-input textarea {
-  resize: vertical;
-  min-height: 96px;
-  border: 1px solid #9ab1c0;
-  border-radius: 10px;
-  padding: 0.75rem;
+  width: 100%;
+  box-sizing: border-box;
+  resize: none;
+  min-height: 72px;
+  max-height: 200px;
+  border: 1px solid #b7c7d1;
+  border-radius: 16px;
+  padding: 0.75rem 3rem 0.75rem 0.9rem;
   font-size: 0.96rem;
   line-height: 1.45;
   background: #ffffff;
 }
 
-.chat-input button {
-  justify-self: end;
-  border: 0;
-  border-radius: 999px;
-  padding: 0.55rem 1rem;
-  font-weight: 600;
-  color: #ffffff;
-  background: linear-gradient(120deg, #17699d, #1f7db8);
+.chat-input textarea:focus {
+  outline: none;
+  border-color: #1f7db8;
+  box-shadow: 0 0 0 2px rgba(31, 125, 184, 0.15);
 }
 
-.chat-input button:disabled {
-  opacity: 0.65;
+.chat-send-btn {
+  position: absolute;
+  right: 0.6rem;
+  bottom: 0.6rem;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  height: 34px;
+  border: 0;
+  border-radius: 50%;
+  color: #ffffff;
+  background: #1f7db8;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+
+.chat-send-btn:hover:not(:disabled) {
+  background: #17699d;
+}
+
+.chat-send-btn:disabled {
+  background: #c2d3de;
   cursor: not-allowed;
 }
 
