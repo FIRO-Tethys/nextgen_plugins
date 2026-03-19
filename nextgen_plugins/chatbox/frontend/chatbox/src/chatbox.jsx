@@ -1,12 +1,10 @@
 // chatbox.jsx
 import { useEffect, useMemo, useRef, useState } from "react";
-import { runChatSession } from "./chatboxEngine";
-import { listOllamaModels } from "./chatboxHelpers";
-import MarkdownContent from "./markdownContent";
-import PlotlyChart from "./PlotlyChart";
-import FlowpathsPmtilesMap from "./FlowpathsPmtilesMap";
-import ModelSelector from "./components/ModelSelector";
-import ThinkingSwitch from "./components/ThinkingSwitch";
+import { runChatSession } from "./lib/chatboxEngine";
+import { listOllamaModels } from "./lib/chatboxHelpers";
+import MarkdownContent from "./components/markdownContent";
+import PlotlyChart from "./components/PlotlyChart";
+import FlowpathsPmtilesMap from "./components/FlowpathsPmtilesMap";
 import "./chatbox.css";
 
 const REQUIRED_MODEL_CAPABILITIES = ["tools"];
@@ -155,21 +153,6 @@ function ChatBox({ thinkingEnabled = true, model = "qwen3", modelOptions = [mode
         <h1>NextGen Chatbox</h1>
       </header>
 
-      <section className="chat-controls">
-        <ModelSelector
-          value={selectedModel}
-          options={availableModels}
-          onChange={setSelectedModel}
-          isLoading={loadingModels}
-          disabled={loading}
-        />
-        <ThinkingSwitch
-          checked={isThinkingEnabled}
-          onChange={setIsThinkingEnabled}
-          disabled={loading}
-        />
-      </section>
-
       <section className="chat-log" ref={chatLogRef}>
         {messages.map((message, index) => {
           const isUser = message.role === "user";
@@ -233,30 +216,60 @@ function ChatBox({ thinkingEnabled = true, model = "qwen3", modelOptions = [mode
         </section>
       )}
 
-      <section className="chat-input">
+      <section className="chat-input-bar">
         <textarea
           value={input}
           onChange={(event) => setInput(event.target.value)}
-          placeholder="Type your prompt..."
+          placeholder={`Message ${selectedModel || "assistant"}...`}
           onKeyDown={(event) => {
             if (event.key === "Enter" && !event.shiftKey) {
               event.preventDefault();
               void sendMessage();
             }
           }}
-          rows={3}
+          rows={1}
         />
-        <button
-          type="button"
-          className="chat-send-btn"
-          onClick={() => void sendMessage()}
-          disabled={loading || !input.trim()}
-          aria-label="Send message"
-        >
-          <svg width="18" height="18" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
-            <path d="M12 3L4 11h5v8h6v-8h5L12 3z" fill="#ffffff" />
-          </svg>
-        </button>
+        <div className="chat-input-toolbar">
+          <div className="chat-input-toggles">
+            <button
+              type="button"
+              className={`chat-pill-btn ${isThinkingEnabled ? "pill-active" : ""}`}
+              onClick={() => setIsThinkingEnabled((v) => !v)}
+              disabled={loading}
+            >
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M12 2a7 7 0 0 1 7 7c0 2.4-1.2 4.5-3 5.7V17a2 2 0 0 1-2 2h-4a2 2 0 0 1-2-2v-2.3C6.2 13.5 5 11.4 5 9a7 7 0 0 1 7-7z"/>
+                <line x1="10" y1="22" x2="14" y2="22"/>
+              </svg>
+              Thinking
+            </button>
+            <select
+              className="chat-model-select"
+              value={selectedModel}
+              onChange={(event) => setSelectedModel(event.target.value)}
+              disabled={loading || loadingModels || !availableModels.length}
+            >
+              {availableModels.length ? (
+                availableModels.map((opt) => (
+                  <option key={opt} value={opt}>{opt}</option>
+                ))
+              ) : (
+                <option value="">{loadingModels ? "Loading..." : "No models"}</option>
+              )}
+            </select>
+          </div>
+          <button
+            type="button"
+            className="chat-send-btn"
+            onClick={() => void sendMessage()}
+            disabled={loading || !input.trim()}
+            aria-label="Send message"
+          >
+            <svg width="18" height="18" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+              <path d="M12 3L4 11h5v8h6v-8h5L12 3z" fill="#ffffff" />
+            </svg>
+          </button>
+        </div>
       </section>
     </div>
   );
