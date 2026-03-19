@@ -166,7 +166,12 @@ function ChatBox({ thinkingEnabled = false, model = "qwen3", modelOptions = [mod
     <section className="chat-input-bar">
       <textarea
         value={input}
-        onChange={(event) => setInput(event.target.value)}
+        onChange={(event) => {
+          setInput(event.target.value);
+          const el = event.target;
+          el.style.height = "auto";
+          el.style.height = `${el.scrollHeight}px`;
+        }}
         placeholder={`Message ${selectedModel || "assistant"}...`}
         onKeyDown={(event) => {
           if (event.key === "Enter" && !event.shiftKey) {
