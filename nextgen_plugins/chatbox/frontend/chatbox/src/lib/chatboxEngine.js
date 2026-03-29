@@ -24,10 +24,16 @@ import {
 } from "./chatboxHelpers";
 import { buildSystemMessage } from "./chatboxMessages";
 
-const DEFAULT_OLLAMA_HOST = (import.meta.env.VITE_OLLAMA_HOST ?? "http://localhost:11434").replace(/\/+$/, "");
+const CONFIGURED_OLLAMA_HOST = (import.meta.env.VITE_OLLAMA_HOST ?? "http://localhost:11434").replace(/\/+$/, "");
+const DEFAULT_OLLAMA_API_KEY = (import.meta.env.VITE_OLLAMA_API_KEY ?? "").trim();
+// In dev mode, use same-origin so requests go through the Vite proxy (avoids CORS with Ollama Cloud).
+// The Ollama browser SDK defaults to window.location.origin when host is empty.
+const DEFAULT_OLLAMA_HOST = import.meta.env.DEV ? "" : CONFIGURED_OLLAMA_HOST;
 const DEFAULT_MCP_SERVER_URL = (import.meta.env.VITE_MCP_SERVER_URL ?? "/sse").trim();
-console.log("Default Ollama host:", DEFAULT_OLLAMA_HOST);
+console.log("Configured Ollama host:", CONFIGURED_OLLAMA_HOST);
+console.log("Effective Ollama host (empty = same-origin proxy):", DEFAULT_OLLAMA_HOST || "(same-origin)");
 console.log("Default MCP server URL:", DEFAULT_MCP_SERVER_URL);
+console.log("Ollama API key configured:", Boolean(DEFAULT_OLLAMA_API_KEY));
 const MAX_TOOL_REPAIR_ATTEMPTS = Number.parseInt(import.meta.env.VITE_MCP_TOOL_REPAIR_ATTEMPTS ?? "0", 10);
 
 const OUTPUT_FILE_QUERY_TOOLS = new Set([
@@ -416,6 +422,7 @@ export async function runChatSession({
   onContentChunk,
   signal,
   ollamaHost = DEFAULT_OLLAMA_HOST,
+  ollamaApiKey = DEFAULT_OLLAMA_API_KEY,
   mcpServerUrl = DEFAULT_MCP_SERVER_URL,
 }) {
   const state = {
@@ -426,7 +433,14 @@ export async function runChatSession({
     lastHydrofabricResult: null,
   };
 
-  const ollamaClient = new Ollama({ host: ollamaHost });
+  // In dev mode, host is empty — use the current origin so SDK requests
+  // (e.g. http://localhost:5173/api/chat) go through the Vite proxy.
+  const effectiveHost = ollamaHost || window.location.origin;
+  const ollamaOpts = { host: effectiveHost };
+  if (ollamaApiKey) {
+    ollamaOpts.headers = { Authorization: `Bearer ${ollamaApiKey}` };
+  }
+  const ollamaClient = new Ollama(ollamaOpts);
   const messages = [buildSystemMessage()];
 
   const text = typeof prompt === "string" ? prompt : "";

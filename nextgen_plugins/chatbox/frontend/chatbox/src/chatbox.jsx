@@ -7,7 +7,10 @@ import PlotlyChart from "./components/PlotlyChart";
 import FlowpathsPmtilesMap from "./components/FlowpathsPmtilesMap";
 import "./chatbox.css";
 
-const REQUIRED_MODEL_CAPABILITIES = ["tools"];
+const OLLAMA_API_KEY = (import.meta.env.VITE_OLLAMA_API_KEY ?? "").trim();
+const CONFIGURED_HOST = (import.meta.env.VITE_OLLAMA_HOST ?? "http://localhost:11434").replace(/\/+$/, "");
+const IS_CLOUD = Boolean(OLLAMA_API_KEY) && !/^https?:\/\/(localhost|127\.\d)/.test(CONFIGURED_HOST);
+const REQUIRED_MODEL_CAPABILITIES = IS_CLOUD ? ["tools"] : ["tools"];
 
 function ChatBox({ thinkingEnabled = false, model = "qwen3", modelOptions = [model], prompt = "" }) {
   const [messages, setMessages] = useState([]);
@@ -25,7 +28,14 @@ function ChatBox({ thinkingEnabled = false, model = "qwen3", modelOptions = [mod
     [modelOptions, model]
   );
   const availableModels = useMemo(
-    () => Array.from(new Set(discoveredModels.filter(Boolean))),
+    () => {
+      const seen = new Set();
+      return discoveredModels.filter((m) => {
+        if (!m?.name || seen.has(m.name)) return false;
+        seen.add(m.name);
+        return true;
+      });
+    },
     [discoveredModels]
   );
   const chatLogRef = useRef(null);
@@ -89,8 +99,8 @@ function ChatBox({ thinkingEnabled = false, model = "qwen3", modelOptions = [mod
     if (!availableModels.length) {
       return;
     }
-    if (!selectedModel || !availableModels.includes(selectedModel)) {
-      setSelectedModel(availableModels[0]);
+    if (!selectedModel || !availableModels.some((m) => m.name === selectedModel)) {
+      setSelectedModel(availableModels[0].name);
     }
   }, [availableModels, selectedModel]);
 
@@ -202,8 +212,10 @@ function ChatBox({ thinkingEnabled = false, model = "qwen3", modelOptions = [mod
             disabled={loading || loadingModels || !availableModels.length}
           >
             {availableModels.length ? (
-              availableModels.map((opt) => (
-                <option key={opt} value={opt}>{opt}</option>
+              availableModels.map((m) => (
+                <option key={m.name} value={m.name}>
+                  {m.capabilities.includes("thinking") ? "\uD83D\uDCA1 " : ""}{m.name}
+                </option>
               ))
             ) : (
               <option value="">{loadingModels ? "Loading..." : "No models"}</option>

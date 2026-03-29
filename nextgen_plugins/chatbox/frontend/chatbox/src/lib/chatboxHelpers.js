@@ -1,7 +1,10 @@
 // chatboxHelpers.js
 import { AUTO_FIX_SYSTEM_MSG, FILE_MSG } from "./chatboxMessages";
 
-const DEFAULT_OLLAMA_HOST = (import.meta.env.VITE_OLLAMA_HOST ?? "http://localhost:11434").replace(/\/+$/, "");
+const CONFIGURED_OLLAMA_HOST = (import.meta.env.VITE_OLLAMA_HOST ?? "http://localhost:11434").replace(/\/+$/, "");
+const DEFAULT_OLLAMA_API_KEY = (import.meta.env.VITE_OLLAMA_API_KEY ?? "").trim();
+// In dev mode, use same-origin so requests go through the Vite proxy (avoids CORS with Ollama Cloud).
+const DEFAULT_OLLAMA_HOST = import.meta.env.DEV ? "" : CONFIGURED_OLLAMA_HOST;
 const URL_RE = /(https?:\/\/\S+|s3:\/\/\S+)/i;
 const FROM_TARGET_RE = /\bfrom\s+([^\s;]+)/i;
 
@@ -701,8 +704,18 @@ function canonicalOllamaModelKey(modelName) {
     : `${normalized}:latest`.toLowerCase();
 }
 
+function parseModelCapabilities(entry) {
+  if (!entry || typeof entry !== "object") return [];
+  const caps = entry.capabilities ?? entry.details?.capabilities;
+  return Array.isArray(caps)
+    ? caps.map((c) => String(c ?? "").trim().toLowerCase()).filter(Boolean)
+    : [];
+}
+
 export async function listOllamaModels(ollamaHost = DEFAULT_OLLAMA_HOST, options = {}) {
   const host = String(ollamaHost ?? DEFAULT_OLLAMA_HOST).replace(/\/+$/, "");
+  const apiKey = typeof options?.apiKey === "string" ? options.apiKey.trim() : DEFAULT_OLLAMA_API_KEY;
+  const authHeaders = apiKey ? { Authorization: `Bearer ${apiKey}` } : {};
   const requiredCapabilities = Array.isArray(options?.requiredCapabilities)
     ? options.requiredCapabilities
         .map((capability) => String(capability ?? "").trim().toLowerCase())
@@ -711,66 +724,75 @@ export async function listOllamaModels(ollamaHost = DEFAULT_OLLAMA_HOST, options
   const extraModels = Array.isArray(options?.extraModels)
     ? options.extraModels.map((entry) => normalizeOllamaModelName(entry)).filter(Boolean)
     : [];
-  const response = await fetch(`${host}/api/tags`);
+  const response = await fetch(`${host}/api/tags`, { headers: authHeaders });
 
   if (!response.ok) {
     throw new Error(`Failed to load Ollama models (${response.status})`);
   }
 
   const payload = await response.json();
-  const models = Array.isArray(payload?.models)
-    ? payload.models
-    : [];
+  const rawModels = Array.isArray(payload?.models) ? payload.models : [];
 
-  const modelNames = Array.from(
-    [...models, ...extraModels]
+  // Build a map of capabilities from /api/tags (cloud includes them inline).
+  const tagsCapsMap = new Map();
+  for (const entry of rawModels) {
+    const name = normalizeOllamaModelName(entry);
+    if (name) {
+      tagsCapsMap.set(canonicalOllamaModelKey(name), parseModelCapabilities(entry));
+    }
+  }
+
+  const modelEntries = Array.from(
+    [...rawModels, ...extraModels]
       .map((entry) => normalizeOllamaModelName(entry))
       .filter(Boolean)
       .reduce((deduped, modelName) => {
-        const canonicalKey = canonicalOllamaModelKey(modelName);
-        if (!canonicalKey || deduped.has(canonicalKey)) {
-          return deduped;
-        }
-        deduped.set(canonicalKey, modelName);
+        const key = canonicalOllamaModelKey(modelName);
+        if (!key || deduped.has(key)) return deduped;
+        deduped.set(key, modelName);
         return deduped;
       }, new Map())
       .values()
   );
 
-  if (!requiredCapabilities.length) {
-    return modelNames;
-  }
+  // Try /api/show for capability inspection (works on local Ollama).
+  // If it fails (e.g. Ollama Cloud 404), fall back to /api/tags capabilities.
+  const inspectedModels = await Promise.all(
+    modelEntries.map(async (modelName) => {
+      const canonKey = canonicalOllamaModelKey(modelName);
+      let capabilities = tagsCapsMap.get(canonKey) ?? [];
 
-  const compatibleModels = await Promise.all(
-    modelNames.map(async (modelName) => {
       try {
         const showResponse = await fetch(`${host}/api/show`, {
           method: "POST",
-          headers: { "Content-Type": "application/json" },
+          headers: { "Content-Type": "application/json", ...authHeaders },
           body: JSON.stringify({ model: modelName }),
         });
 
-        if (!showResponse.ok) {
-          console.warn(`Unable to inspect Ollama model capabilities for ${modelName}: ${showResponse.status}`);
-          return "";
+        if (showResponse.ok) {
+          console.log(`Fetched capabilities for model ${modelName} from /api/show.`);
+          const showPayload = await showResponse.json();
+          const showCaps = Array.isArray(showPayload?.capabilities)
+            ? showPayload.capabilities.map((c) => String(c ?? "").trim().toLowerCase()).filter(Boolean)
+            : [];
+          if (showCaps.length) {
+            capabilities = showCaps;
+          }
         }
-
-        const payload = await showResponse.json();
-        const capabilities = Array.isArray(payload?.capabilities)
-          ? payload.capabilities.map((capability) => String(capability ?? "").trim().toLowerCase())
-          : [];
-
-        return requiredCapabilities.every((capability) => capabilities.includes(capability))
-          ? modelName
-          : "";
-      } catch (error) {
-        console.warn(`Unable to inspect Ollama model capabilities for ${modelName}:`, error);
-        return "";
+      } catch {
+        console.log(`Could not fetch capabilities for model ${modelName} from /api/show, falling back to /api/tags if available.`);
+        // /api/show unavailable (e.g. Ollama Cloud) — use /api/tags capabilities.
       }
+
+      if (requiredCapabilities.length && !requiredCapabilities.every((cap) => capabilities.includes(cap))) {
+        return null;
+      }
+
+      return { name: modelName, capabilities };
     })
   );
 
-  return compatibleModels.filter(Boolean);
+  return inspectedModels.filter(Boolean);
 }
 
 export function omitEmptyArgs(args) {
