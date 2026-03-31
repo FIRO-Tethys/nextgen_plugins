@@ -12,7 +12,8 @@ const CONFIGURED_HOST = (import.meta.env.VITE_OLLAMA_HOST ?? "http://localhost:1
 const IS_CLOUD = Boolean(OLLAMA_API_KEY) && !/^https?:\/\/(localhost|127\.\d)/.test(CONFIGURED_HOST);
 const REQUIRED_MODEL_CAPABILITIES = IS_CLOUD ? ["tools"] : ["tools"];
 
-function ChatBox({ thinkingEnabled = false, model = "qwen3", modelOptions = [model], prompt = "" }) {
+function ChatBox({ thinkingEnabled = false, model = "qwen3", modelOptions = [model], prompt = "", ollamaHost, mcpServerUrl, updateVariableInputValues, variableInputValues }) {
+  const isEmbedded = typeof updateVariableInputValues === "function";
   const [messages, setMessages] = useState([]);
   const [input, setInput] = useState(prompt);
   const [thinkingBuffer, setThinkingBuffer] = useState("");
@@ -69,6 +70,15 @@ function ChatBox({ thinkingEnabled = false, model = "qwen3", modelOptions = [mod
   }, [isThinkingEnabled]);
 
   useEffect(() => {
+    // When embedded in tethysdash, skip Ollama model discovery (CORS blocked)
+    // and use the models provided via props from the backend plugin.
+    if (isEmbedded) {
+      setDiscoveredModels(
+        configuredModels.map((name) => ({ name, capabilities: ["tools"] }))
+      );
+      return;
+    }
+
     let cancelled = false;
     setLoadingModels(true);
 
@@ -93,7 +103,7 @@ function ChatBox({ thinkingEnabled = false, model = "qwen3", modelOptions = [mod
     return () => {
       cancelled = true;
     };
-  }, [configuredModels]);
+  }, [configuredModels, isEmbedded]);
 
   useEffect(() => {
     if (!availableModels.length) {
@@ -129,6 +139,8 @@ function ChatBox({ thinkingEnabled = false, model = "qwen3", modelOptions = [mod
         model: selectedModel,
         thinkingEnabled: isThinkingEnabled,
         signal: controller.signal,
+        ...(ollamaHost ? { ollamaHost } : {}),
+        ...(mcpServerUrl ? { mcpServerUrl } : {}),
         onThinkingChunk: (chunk) => {
           if (!isThinkingEnabled || !chunk) {
             return;
@@ -140,6 +152,10 @@ function ChatBox({ thinkingEnabled = false, model = "qwen3", modelOptions = [mod
           if (!chunk) return;
           accumulatedContent += chunk;
           setContentBuffer(accumulatedContent);
+          // Stream content to external panels in real-time
+          if (isEmbedded) {
+            updateVariableInputValues({ chatbox_markdown: accumulatedContent });
+          }
         },
       });
 
@@ -149,6 +165,18 @@ function ChatBox({ thinkingEnabled = false, model = "qwen3", modelOptions = [mod
         ? (accumulatedContent || "(Stopped)")
         : (result.assistantText || "");
 
+      // Publish results to tethysdash panels via variableInputValues
+      if (isEmbedded) {
+        const updates = {};
+        if (result.plotlyFigure) updates.chatbox_chart = result.plotlyFigure;
+        if (result.mapConfig) updates.chatbox_map = result.mapConfig;
+        if (result.queryResult) updates.chatbox_query = result.queryResult;
+        if (result.assistantText) updates.chatbox_markdown = result.assistantText;
+        if (Object.keys(updates).length > 0) {
+          updateVariableInputValues(updates);
+        }
+      }
+
       setMessages((prev) => [
         ...prev,
         {
@@ -157,6 +185,7 @@ function ChatBox({ thinkingEnabled = false, model = "qwen3", modelOptions = [mod
           thinking: accumulatedThinking || "",
           plotlyFigure: result.plotlyFigure ?? null,
           mapConfig: result.mapConfig ?? null,
+          queryResult: result.queryResult ?? null,
         },
       ]);
       setThinkingBuffer("");
@@ -254,14 +283,6 @@ function ChatBox({ thinkingEnabled = false, model = "qwen3", modelOptions = [mod
     return (
       <div className="chat-shell chat-shell-welcome">
         <div className="chat-welcome">
-          <div className="chat-welcome-logo">
-            <svg width="48" height="48" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-              <path d="M1 18c1.5-1.5 3.5-2 5-2s3 1 4 2 2.5 2 4 2 3.5-.5 5-2" stroke="#1f7db8" strokeWidth="2" strokeLinecap="round"/>
-              <path d="M1 14c1.5-1.5 3.5-2 5-2s3 1 4 2 2.5 2 4 2 3.5-.5 5-2" stroke="#1f7db8" strokeWidth="2" strokeLinecap="round" opacity="0.5"/>
-              <path d="M12 3v7M9 6l3-3 3 3" stroke="#1f7db8" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
-            </svg>
-          </div>
-          <h1>How can I help you?</h1>
         </div>
         {inputBar}
       </div>
@@ -289,16 +310,36 @@ function ChatBox({ thinkingEnabled = false, model = "qwen3", modelOptions = [mod
                     <pre>{message.thinking}</pre>
                   </details>
                 )}
-                {message.mapConfig ? (
-                  <div className="chat-map-wrapper" style={{ width: "100%", minHeight: "500px", marginTop: "12px" }}>
-                    <FlowpathsPmtilesMap mapConfig={message.mapConfig} />
-                  </div>
+                {isUser ? (
+                  message.content && <MarkdownContent content={message.content} />
+                ) : message.mapConfig ? (
+                  isEmbedded ? (
+                    <p className="chat-panel-indicator">Map updated in Map panel</p>
+                  ) : (
+                    <div className="chat-map-wrapper" style={{ width: "100%", minHeight: "500px", marginTop: "12px" }}>
+                      <FlowpathsPmtilesMap mapConfig={message.mapConfig} />
+                    </div>
+                  )
                 ) : message.plotlyFigure ? (
-                  <div className="chat-plot-wrapper" style={{ width: "100%", minHeight: "360px", marginTop: "12px" }}>
-                    <PlotlyChart figure={message.plotlyFigure} />
-                  </div>
+                  isEmbedded ? (
+                    <p className="chat-panel-indicator">Chart updated in Chart panel</p>
+                  ) : (
+                    <div className="chat-plot-wrapper" style={{ width: "100%", minHeight: "360px", marginTop: "12px" }}>
+                      <PlotlyChart figure={message.plotlyFigure} />
+                    </div>
+                  )
+                ) : message.queryResult ? (
+                  isEmbedded ? (
+                    <p className="chat-panel-indicator">Query results sent to Query panel</p>
+                  ) : (
+                    <MarkdownContent content={message.content || JSON.stringify(message.queryResult.data, null, 2)} />
+                  )
                 ) : message.content ? (
-                  <MarkdownContent content={message.content} />
+                  isEmbedded ? (
+                    <p className="chat-panel-indicator">Response sent to panels</p>
+                  ) : (
+                    <MarkdownContent content={message.content} />
+                  )
                 ) : null}
               </article>
             </div>
@@ -317,7 +358,11 @@ function ChatBox({ thinkingEnabled = false, model = "qwen3", modelOptions = [mod
                   <pre>{thinkingBuffer}</pre>
                 </details>
               )}
-              {contentBuffer ? (
+              {isEmbedded ? (
+                <p className="chat-status">
+                  {contentBuffer ? "Streaming to panels..." : thinkingBuffer ? "" : "Running..."}
+                </p>
+              ) : contentBuffer ? (
                 <MarkdownContent content={contentBuffer} />
               ) : (
                 !thinkingBuffer && <p className="chat-status">Running...</p>

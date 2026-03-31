@@ -21,6 +21,10 @@ export default defineConfig(({ mode }) => {
         filename: "remoteEntry.js",
         exposes: {
           "./Chatbox": "./src/chatbox",
+          "./ChartPanel": "./src/panels/ChartPanel",
+          "./MapPanel": "./src/panels/MapPanel",
+          "./MarkdownPanel": "./src/panels/MarkdownPanel",
+          "./QueryPanel": "./src/panels/QueryPanel",
         },
         shared: ["react", "react-dom"],
       }),
@@ -43,6 +47,7 @@ export default defineConfig(({ mode }) => {
       },
     },
     preview: {
+      cors: true,
       proxy: {
         "/sse": {
           target: "http://127.0.0.1:9000",

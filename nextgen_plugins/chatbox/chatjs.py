@@ -11,7 +11,8 @@ OUTPUTS_DIR = "outputs"
 PREFIX_HYDROFABRIC = "v2.2_hydrofabric"
 NGEN_RUN_PREFIX = "ngen-run/outputs/troute"
 
-OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "qwen3")
+OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "qwen3.5:397b-cloud")
+OLLAMA_HOST = os.getenv("OLLAMA_HOST", "http://127.0.0.1:11434")
 MCP_SERVER_URL = os.getenv("MCP_SERVER_URL", "http://127.0.0.1:9000/sse")
 MAX_TOOL_REPAIR_ATTEMPTS = int(os.getenv("MCP_TOOL_REPAIR_ATTEMPTS", "0"))
 OLLAMA_STREAM_THINKING = os.getenv("OLLAMA_STREAM_THINKING", "1").lower() in {"1", "true", "yes", "on"}
@@ -33,6 +34,7 @@ class NRDSChatJS(base.DataSource):
     visualization_description = "Time series visualization for the NRDS s3 bucket JS based chatbox plugin."
     visualization_args = {
         "usr_msg": "text",
+        # "llm_host": "text",
     }
     visualization_group = "NextGen"
     visualization_label = "NextGen Live Chat JS Based"
@@ -56,6 +58,7 @@ class NRDSChatJS(base.DataSource):
         self.mfe_scope = "mfe_nrds_chatbox"
         self.mfe_module = "./Chatbox"
         self.remoteType = "vite-esm"
+        # self.llm_host = llm_host
         super(NRDSChatJS, self).__init__(metadata=metadata)
 
     def read(self):
@@ -68,7 +71,10 @@ class NRDSChatJS(base.DataSource):
             "props": {
                 "thinkingEnabled": False,
                 "model": self.ollama_model,
+                "modelOptions": [self.ollama_model],
                 "prompt": self.usr_msg,
+                "ollamaHost": self.mfe_unpkg_url.rsplit("/assets/", 1)[0],
+                "mcpServerUrl": self.mfe_unpkg_url.rsplit("/assets/", 1)[0] + "/sse",
             },
         }
 

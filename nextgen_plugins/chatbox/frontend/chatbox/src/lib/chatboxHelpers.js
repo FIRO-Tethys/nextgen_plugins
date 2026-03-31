@@ -5,6 +5,7 @@ const CONFIGURED_OLLAMA_HOST = (import.meta.env.VITE_OLLAMA_HOST ?? "http://loca
 const DEFAULT_OLLAMA_API_KEY = (import.meta.env.VITE_OLLAMA_API_KEY ?? "").trim();
 // In dev mode, use same-origin so requests go through the Vite proxy (avoids CORS with Ollama Cloud).
 const DEFAULT_OLLAMA_HOST = import.meta.env.DEV ? "" : CONFIGURED_OLLAMA_HOST;
+// const DEFAULT_OLLAMA_HOST =  ""; 
 const URL_RE = /(https?:\/\/\S+|s3:\/\/\S+)/i;
 const FROM_TARGET_RE = /\bfrom\s+([^\s;]+)/i;
 

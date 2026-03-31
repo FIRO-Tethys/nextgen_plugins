@@ -365,6 +365,7 @@ async function processToolCalls(toolCalls, messages, mcpClient, state, originalU
       !toolErrorText(toolResult)
     ) {
       state.lastQueryResult = toolResult;
+      state.lastQuerySQL = typeof args?.query === "string" ? args.query : null;
     }
 
     if (
@@ -428,6 +429,7 @@ export async function runChatSession({
   const state = {
     lastChartResult: null,
     lastQueryResult: null,
+    lastQuerySQL: null,
     lastListResult: null,
     lastMapResult: null,
     lastHydrofabricResult: null,
@@ -514,11 +516,6 @@ export async function runChatSession({
         return { assistantText, messages };
       }
 
-      // if (!Object.prototype.hasOwnProperty.call(message, "tool_calls")) {
-      //   message.tool_calls = toolCalls;
-      // }
-
-    //  messages.push(message);
       messages.push({
         role: "assistant",
         content: stripThinkTags(typeof message.content === "string" ? message.content : ""),
@@ -539,6 +536,7 @@ export async function runChatSession({
       if (!hadError && state.lastQueryResult) {
         return {
           assistantText: JSON.stringify(state.lastQueryResult),
+          queryResult: { data: state.lastQueryResult, sql: state.lastQuerySQL },
           messages,
         };
       }
@@ -561,6 +559,7 @@ export async function runChatSession({
       if (!hadError && state.lastHydrofabricResult) {
         return {
           assistantText: JSON.stringify(state.lastHydrofabricResult),
+          queryResult: { data: state.lastHydrofabricResult, sql: null },
           messages,
         };
       }
@@ -616,10 +615,6 @@ export async function runChatSession({
             continue;
           }
 
-          // if (!Object.prototype.hasOwnProperty.call(repairMessage, "tool_calls")) {
-          //   repairMessage.tool_calls = repairCalls;
-          // }
-          // messages.push(repairMessage);
           messages.push({
             role: "assistant",
             content: stripThinkTags(typeof repairMessage.content === "string" ? repairMessage.content : ""),
