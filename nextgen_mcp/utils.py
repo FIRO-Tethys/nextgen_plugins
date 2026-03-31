@@ -83,12 +83,6 @@ def _get_json_raw(endpoint_key: str, params: Optional[Dict[str, Any]] = None, **
             title=p.get("title"),
         )
     
-    # if endpoint_key == "create_plotly_chart_from_parquet_output_file":
-    #     return create_plotly_chart_from_parquet_output_file(
-    #         s3_url=p["s3_url"],
-    #         query=p["query"],
-    #         title=p.get("title"),
-    #     )
     if endpoint_key == "build_hydrofabric_feature_map_config":
         return build_hydrofabric_feature_map_config(
             hydrofabric_id=p["hydrofabric_id"], 
