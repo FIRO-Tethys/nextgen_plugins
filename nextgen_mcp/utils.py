@@ -5,8 +5,8 @@ import re
 from typing import Dict, Any, Optional
 from datetime import datetime, date
 from zoneinfo import ZoneInfo
-from nextgen_plugins.chatbox.validators import normalize_vpu
-from nextgen_plugins.chatbox.rest import (
+from .validators import normalize_vpu
+from .rest import (
     list_available_models,
     list_available_dates,
     list_available_forecasts,
