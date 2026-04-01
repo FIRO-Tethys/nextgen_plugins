@@ -488,61 +488,90 @@ npm run build                          # prebuild script discovers the plugins
 
 ---
 
-### Phase 3 (Optional): Dynamic Panel Creation via DOM Events
+### Phase 3: Dynamic Panel Creation via DOM Events (IMPLEMENTED)
 
-If the chatbox needs to **programmatically add** panels to the dashboard (rather than requiring users to pre-place them), add a DOM event listener.
+Panels are created automatically when the chatbox produces results, without requiring users to pre-place them.
 
-#### 3.1 Add event listener to DashboardLayout
+#### 3.1 Event listener in DashboardLayout (IMPLEMENTED)
 
-**Modify:** `reactapp/components/dashboard/DashboardLayout.js`
+**Modified:** `reactapp/components/dashboard/DashboardLayout.js`
 
-Add a `useEffect` that listens for `tethysdash:add-visualization` events and creates grid items. This component already has access to `TabContext` (`updateTab`, `activeTabId`, `gridItems`).
+Added a `useEffect` that listens for `tethysdash:add-visualization` events and creates grid items. Uses a ref (`gridItemsUpdated`) to read current grid items without stale closures. Deduplicates by `args.module` (not source name, since all dynamic panels share `source: "Client Custom"`).
 
 ```javascript
 useEffect(() => {
   function handleAddVisualization(e) {
-    const { source, args, position } = e.detail
-    const maxI = gridItems.reduce((max, item) => Math.max(max, parseInt(item.i) || 0), 0)
+    const { source, args, position } = e.detail || {};
+    if (!source) return;
+
+    const current = gridItemsUpdated.current;
+    // Deduplicate by module name for Client Custom panels
+    if (args?.module) {
+      const alreadyExists = current.some((item) => {
+        try { return JSON.parse(item.args_string).module === args.module; }
+        catch { return false; }
+      });
+      if (alreadyExists) return;
+    }
+
+    const maxI = current.reduce((max, item) => Math.max(max, parseInt(item.i) || 0), 0);
     const newItem = {
       x: position?.x ?? 0,
-      y: position?.y ?? 0,
-      w: position?.w ?? 20,
+      y: position?.y ?? Infinity,
+      w: position?.w ?? 50,
       h: position?.h ?? 20,
-      source: source,
-      args_string: JSON.stringify(args ?? {}),
+      source, args_string: JSON.stringify(args ?? {}),
       metadata_string: JSON.stringify({ refreshRate: 0 }),
-      uuid: uuidv4(),
-      id: null,
-      i: `${maxI + 1}`,
-    }
-    updateTab(activeTabId, { gridItems: [...gridItems, newItem] })
+      uuid: uuidv4(), id: null, i: `${maxI + 1}`,
+    };
+    updateTab(tabId, { gridItems: [...current, newItem] });
   }
 
-  window.addEventListener('tethysdash:add-visualization', handleAddVisualization)
-  return () => window.removeEventListener('tethysdash:add-visualization', handleAddVisualization)
-}, [gridItems, activeTabId, updateTab])
+  window.addEventListener("tethysdash:add-visualization", handleAddVisualization);
+  return () => window.removeEventListener("tethysdash:add-visualization", handleAddVisualization);
+}, [tabId, updateTab]);
 ```
 
-#### 3.2 Chatbox dispatches events
+#### 3.2 Chatbox dispatches events (IMPLEMENTED)
 
-In `chatbox.jsx`, after writing to `variableInputValues`:
+In `chatbox.jsx`, after writing to `variableInputValues`, the chatbox dispatches events with `initialData` for first-mount delivery:
 
 ```javascript
-if (result.plotlyFigure) {
-  props.updateVariableInputValues({ chatbox_chart: result.plotlyFigure })
-  window.dispatchEvent(new CustomEvent('tethysdash:add-visualization', {
-    detail: { source: "chatbox_chart_panel" }
-  }))
+const mfeUrl = window.__CHATBOX_MFE_URL__ || new URL("remoteEntry.js", import.meta.url).href;
+const requestPanel = (module, initialData) => {
+  window.dispatchEvent(new CustomEvent("tethysdash:add-visualization", {
+    detail: {
+      source: "Client Custom",
+      args: { url: mfeUrl, scope: "mfe_nrds_chatbox", module, remoteType: "vite-esm", initialData },
+    },
+  }));
+};
+if (result.plotlyFigure) requestPanel("./ChartPanel", { chatbox_chart: result.plotlyFigure });
+if (result.mapConfig) requestPanel("./MapPanel", { chatbox_map: result.mapConfig });
+if (result.queryResult) requestPanel("./QueryPanel", { chatbox_query: result.queryResult });
+if (result.assistantText && !result.plotlyFigure && !result.mapConfig && !result.queryResult) {
+  requestPanel("./MarkdownPanel", { chatbox_markdown: result.assistantText });
 }
 ```
 
-**Timing:** The variable is set before the event creates the panel. When `ClientModuleLoader` renders ChartPanel, `variableInputValues.chatbox_chart` is already populated.
+#### 3.3 Initial data delivery (IMPLEMENTED)
 
-**Deduplication:** The listener should check if a panel with the same source already exists on the dashboard before creating a duplicate. Add a guard:
+**Problem solved:** When a panel is dynamically created, `variableInputValues` context may not have flushed yet, leaving the panel with no data on first mount.
+
+**Solution:** Initial data is passed through `args.initialData`. The `getVisualization()` function in `utilities.js` forwards `args.initialData` as `vizData.props`. `ModuleLoader` spreads `props.props` onto the component. Each panel accepts its variable key as a destructured prop fallback:
+
 ```javascript
-const alreadyExists = gridItems.some(item => item.source === source)
-if (alreadyExists) return  // Panel already on dashboard, variable update is enough
+// QueryPanel.jsx
+export default function QueryPanel({ variableInputValues, chatbox_query: initialQuery }) {
+  const queryData = variableInputValues?.chatbox_query || initialQuery;
+  // ...
+}
 ```
+
+**Key details:**
+- `source` must be `"Client Custom"` (the display name from the visualization list), not `"client_custom_remote"` (the type). The lookup in `Base.js` matches by source name.
+- MFE URL is auto-derived from `import.meta.url` so it works regardless of where the chatbox is served.
+- Deduplication is by `args.module`, not source name, since all dynamic panels share the same source.
 
 ---
 
@@ -577,26 +606,31 @@ PlotlyChart renders FlowpathsPmtilesMap MarkdownContent
                     renders              renders
 ```
 
-### Option C: Dynamic creation (optional enhancement)
+### Option C: Dynamic creation (IMPLEMENTED)
 
 ```
 Dashboard loads with only:
   [Chatbox]
       |
-User asks question → LLM returns { plotlyFigure }
+User asks question → LLM returns { queryResult }
       |
 chatbox.jsx calls:
-  1. props.updateVariableInputValues({ chatbox_chart: result.plotlyFigure })
-  2. window.dispatchEvent('tethysdash:add-visualization', { source: "chatbox_chart_panel" })
+  1. updateVariableInputValues({ chatbox_query: result.queryResult })
+  2. window.dispatchEvent('tethysdash:add-visualization', {
+       source: "Client Custom",
+       args: { url, scope, module: "./QueryPanel", remoteType, initialData: { chatbox_query } }
+     })
       |
 DashboardLayout listener:
-  → checks: chatbox_chart_panel already on dashboard? No
-  → creates grid item { source: "chatbox_chart_panel" }
+  → deduplicates by args.module: ./QueryPanel already on dashboard? No
+  → creates grid item { source: "Client Custom", args_string: JSON.stringify(args) }
   → updateTab()
       |
 BaseVisualization renders new item:
-  → getVisualization() hits client_custom branch (no API call)
-  → ClientModuleLoader loads ChartPanel
+  → getVisualization() hits client_custom_remote branch (no API call)
+  → sets vizData.props = args.initialData (first-mount data)
+  → ModuleLoader loads QueryPanel via Module Federation
+  → QueryPanel receives initialData as props (immediate) + variableInputValues from context (reactive)
   → ChartPanel reads variableInputValues.chatbox_chart (already set)
   → PlotlyChart renders
 ```
@@ -642,52 +676,108 @@ Detection: check if `props.updateVariableInputValues` exists. If yes, the chatbo
 
 ## Files to Create/Modify Summary
 
-### TethysDash changes
+### TethysDash changes (IMPLEMENTED)
 
 | Action | File | Description |
 |--------|------|-------------|
-| CREATE | `scripts/collectClientPlugins.js` | Discovery script (~40 lines) |
+| CREATE | `scripts/collectClientPlugins.js` | Discovery script — scans node_modules, writes JSON registry + JS import map |
 | CREATE | `reactapp/generated/clientPluginRegistry.json` | Auto-generated registry (gitignored) |
-| CREATE | `reactapp/components/visualizations/ClientModuleLoader.js` | Component loader (~50 lines) |
-| MODIFY | `package.json` | Add `prebuild` and `prestart` scripts |
-| MODIFY | `reactapp/components/loader/AppLoader.js` | Import and merge client plugin registry |
-| MODIFY | `reactapp/components/visualizations/utilities.js` | Add `client_custom` branch in `getVisualization()` |
-| MODIFY | `reactapp/components/visualizations/Base.js` | Add `client_custom` case in `<Visualization>` switch, add to exclusion lists |
-| MODIFY (Phase 3) | `reactapp/components/dashboard/DashboardLayout.js` | DOM event listener for dynamic creation |
+| CREATE | `reactapp/generated/clientPluginImports.js` | Auto-generated build-time import map (gitignored) |
+| CREATE | `reactapp/components/visualizations/ClientModuleLoader.js` | Loads npm-installed client plugins by source name via import map, passes variableInputValues |
+| MODIFY | `package.json` | Added `prebuild`, `prestart`, `precollect` scripts |
+| MODIFY | `.gitignore` | Added generated registry + import map |
+| MODIFY | `reactapp/components/loader/AppLoader.js` | Imports clientPluginRegistry.json, merges into visualization list; added "Client Custom" to Default group (`client_custom_remote` type) |
+| MODIFY | `reactapp/components/visualizations/utilities.js` | Added `client_custom` branch (build-time, no API call); added `client_custom_remote` branch (runtime, reuses `ModuleLoader`); added `visualizations` parameter |
+| MODIFY | `reactapp/components/visualizations/Base.js` | Added `client_custom` case rendering `ClientModuleLoader`; excluded from refresh rate; passes `visualizations` to `getVisualization()` |
 
-### Chatbox/Panel package changes
+### Chatbox/Panel package changes (IMPLEMENTED)
 
 | Action | File | Description |
 |--------|------|-------------|
-| CREATE | `src/panels/ChartPanel.jsx` | Reads `variableInputValues.chatbox_chart`, renders PlotlyChart |
-| CREATE | `src/panels/MapPanel.jsx` | Reads `variableInputValues.chatbox_map`, renders FlowpathsPmtilesMap |
-| CREATE | `src/panels/MarkdownPanel.jsx` | Reads `variableInputValues.chatbox_markdown`, renders MarkdownContent |
-| MODIFY | `src/chatbox.jsx` | Publish results to `variableInputValues` when inside tethysdash |
-| CREATE | `package.json` (for npm package) | `tethysdash.clientPlugins` metadata |
+| CREATE | `src/panels/ChartPanel.jsx` | Reads `variableInputValues.chatbox_chart` (falls back to `chatbox_chart` initial prop), renders PlotlyChart |
+| CREATE | `src/panels/MapPanel.jsx` | Reads `variableInputValues.chatbox_map` (falls back to `chatbox_map` initial prop), renders FlowpathsPmtilesMap |
+| CREATE | `src/panels/MarkdownPanel.jsx` | Reads `variableInputValues.chatbox_markdown` (falls back to `chatbox_markdown` initial prop), renders MarkdownContent |
+| CREATE | `src/panels/QueryPanel.jsx` | Reads `variableInputValues.chatbox_query` (falls back to `chatbox_query` initial prop), renders scrollable HTML table |
+| MODIFY | `src/chatbox.jsx` | Accepts updateVariableInputValues/variableInputValues props; detects embedded mode; publishes chatbox_chart/chatbox_map/chatbox_markdown/chatbox_query; dispatches `tethysdash:add-visualization` events for Option C; derives MFE URL from `import.meta.url`; shows text indicators when embedded |
+| MODIFY | `src/lib/chatboxEngine.js` | Returns `queryResult: { data, sql }` for query/hydrofabric results |
+| MODIFY | `vite.config.js` | Exposes `./QueryPanel` via Module Federation |
+
+### TethysDash changes for Option C (IMPLEMENTED)
+
+| Action | File | Description |
+|--------|------|-------------|
+| MODIFY | `reactapp/components/dashboard/DashboardLayout.js` | Added `useEffect` listener for `tethysdash:add-visualization` DOM events; deduplicates by `args.module`; imports `useEffect` and `uuidv4` |
+| MODIFY | `reactapp/components/visualizations/utilities.js` | `client_custom_remote` branch forwards `args.initialData` as `vizData.props` |
+
+### Remaining work (NOT YET IMPLEMENTED)
+
+| Action | File | Description |
+|--------|------|-------------|
+| CREATE | npm package `package.json` | `tethysdash.clientPlugins` metadata for the panel components |
+| TODO | npm package build setup | Build the panels as an installable package, `npm link` or `npm install` into tethysdash |
+
+---
+
+## Two Loading Approaches
+
+### Build-time (npm-installed client plugins, `client_custom` type)
+
+- `collectClientPlugins.js` generates `clientPluginImports.js` with static `import()` calls
+- Webpack resolves and code-splits these at build time
+- `ClientModuleLoader` looks up the source name in the import map
+- No runtime fetching, no Module Federation, no CORS
+- Must rebuild tethysdash when plugin changes
+
+### Runtime (user-provided remote URL, `client_custom_remote` type)
+
+- User selects "Client Custom" from the visualization picker (in Default group)
+- Fills in url, scope, module, remoteType via the existing DataViewer args UI
+- `getVisualization()` short-circuits to set `vizType="custom"` with MFE coordinates
+- Reuses existing `ModuleLoader` and `remoteLoader.js` — zero new loading code
+- No Python backend needed — the args contain everything to load the remote
+- Plugin can update independently without rebuilding tethysdash
+
+Both approaches coexist. Build-time plugins appear in the picker under their declared group. Runtime plugins are added via the "Client Custom" option in the Default group.
 
 ---
 
 ## Testing Checklist
 
-- [ ] `npm run build` in tethysdash discovers client plugins from installed npm packages
+### Build-time client plugins (`client_custom`)
+- [ ] `npm run build` in tethysdash runs `collectClientPlugins.js` and generates registry + import map
 - [ ] Client plugins appear in the visualization picker under their declared group
 - [ ] Adding a client plugin to a dashboard does NOT trigger a backend API call
 - [ ] `ClientModuleLoader` renders the component and passes `variableInputValues`
 - [ ] Chatbox writes to `variableInputValues` when `updateVariableInputValues` prop is available
 - [ ] ChartPanel renders when `variableInputValues.chatbox_chart` is populated
-- [ ] MapPanel renders base map with no data, updates when `variableInputValues.chatbox_map` is set
+- [ ] MapPanel renders with no data, updates when `variableInputValues.chatbox_map` is set
 - [ ] MarkdownPanel renders when `variableInputValues.chatbox_markdown` is populated
 - [ ] Chatbox still works standalone (renders inline when `updateVariableInputValues` is not available)
-- [ ] No regressions in existing backend plugin visualizations
-- [ ] No regressions in existing client-only sources (Map, Text, Custom Image, Variable Input, Live Chat)
-- [ ] (Phase 3) DOM event creates a panel dynamically and data is available immediately
-- [ ] (Phase 3) Duplicate panels are not created when the same event fires twice
+
+### Runtime client plugins (`client_custom_remote`)
+- [ ] "Client Custom" appears in the Default group in the visualization picker
+- [ ] User can fill in url, scope, module, remoteType via DataViewer
+- [ ] Adding to dashboard does NOT trigger a backend API call
+- [ ] Component loads via existing `ModuleLoader` / `remoteLoader.js`
+- [ ] `variableInputValues` and `updateVariableInputValues` are passed to the loaded component
+
+### No regressions
+- [ ] Existing backend plugin visualizations (plotly, table, map, card, etc.) work unchanged
+- [ ] Existing `custom` type Python plugins (like NRDSChatJS) load via ModuleLoader as before
+- [ ] Existing client-only sources (Map, Text, Custom Image, Variable Input, Live Chat) work unchanged
+
+### Dynamic panel creation (Phase 3 / Option C) -- IMPLEMENTED
+- [ ] DOM event creates a panel dynamically and data is available immediately via `initialData`
+- [ ] Duplicate panels are not created when the same event fires twice (dedup by `args.module`)
+- [ ] MFE URL is correctly derived from `import.meta.url`
+- [ ] Panels work on first mount (initial data via props) and on subsequent prompts (context updates)
+- [ ] QueryPanel displays table rows from MCP query results
 
 ---
 
-## Open Questions for Implementation
+## Open Questions
 
-1. **Build-time vs runtime import:** Should `ClientModuleLoader` use `/* webpackIgnore: true */` (runtime loading, requires pre-built ESM from the npm package) or should the discovery script generate a static import map that webpack can bundle? Build-time bundling is simpler if both codebases deploy together.
+1. ~~**Build-time vs runtime import**~~ — RESOLVED: Both approaches are supported. Build-time for npm-installed packages, runtime for user-provided URLs.
 
 2. **Scoped namespacing:** Variable names like `chatbox_chart` could collide if multiple chatbox instances are on the same dashboard. Should the variable names include the grid item UUID? e.g., `chatbox_chart_${gridItemUUID}`. This adds complexity but prevents conflicts.
 
