@@ -1,7 +1,7 @@
 import MarkdownContent from "../components/markdownContent";
 
-export default function MarkdownPanel({ variableInputValues }) {
-  const content = variableInputValues?.chatbox_markdown;
+export default function MarkdownPanel({ variableInputValues, chatbox_markdown: initialMarkdown }) {
+  const content = variableInputValues?.chatbox_markdown || initialMarkdown;
 
   if (!content) {
     return (

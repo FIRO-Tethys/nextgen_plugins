@@ -175,6 +175,36 @@ function ChatBox({ thinkingEnabled = false, model = "qwen3", modelOptions = [mod
         if (Object.keys(updates).length > 0) {
           updateVariableInputValues(updates);
         }
+
+        // Request dynamic panel creation (Option C)
+        // Panels are created only if they don't already exist on the dashboard.
+        // Initial data is passed via args so it's available at mount time
+        // before the variableInputValues context propagates.
+        const mfeUrl =
+          window.__CHATBOX_MFE_URL__ ||
+          new URL("remoteEntry.js", import.meta.url).href;
+        const requestPanel = (module, initialData) => {
+          window.dispatchEvent(
+            new CustomEvent("tethysdash:add-visualization", {
+              detail: {
+                source: "Client Custom",
+                args: {
+                  url: mfeUrl,
+                  scope: "mfe_nrds_chatbox",
+                  module,
+                  remoteType: "vite-esm",
+                  initialData,
+                },
+              },
+            }),
+          );
+        };
+        if (result.plotlyFigure) requestPanel("./ChartPanel", { chatbox_chart: result.plotlyFigure });
+        if (result.mapConfig) requestPanel("./MapPanel", { chatbox_map: result.mapConfig });
+        if (result.queryResult) requestPanel("./QueryPanel", { chatbox_query: result.queryResult });
+        if (result.assistantText && !result.plotlyFigure && !result.mapConfig && !result.queryResult) {
+          requestPanel("./MarkdownPanel", { chatbox_markdown: result.assistantText });
+        }
       }
 
       setMessages((prev) => [
