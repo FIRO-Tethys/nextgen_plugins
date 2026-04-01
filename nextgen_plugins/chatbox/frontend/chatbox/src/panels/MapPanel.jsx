@@ -1,7 +1,7 @@
 import FlowpathsPmtilesMap from "../components/FlowpathsPmtilesMap";
 
-export default function MapPanel({ variableInputValues }) {
-  const mapConfig = variableInputValues?.chatbox_map ?? null;
+export default function MapPanel({ variableInputValues, chatbox_map: initialMap }) {
+  const mapConfig = variableInputValues?.chatbox_map ?? initialMap ?? null;
 
   if (!mapConfig) {
     return (

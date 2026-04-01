@@ -1,7 +1,7 @@
 import PlotlyChart from "../components/PlotlyChart";
 
-export default function ChartPanel({ variableInputValues }) {
-  const figure = variableInputValues?.chatbox_chart;
+export default function ChartPanel({ variableInputValues, chatbox_chart: initialChart }) {
+  const figure = variableInputValues?.chatbox_chart || initialChart;
 
   if (!figure) {
     return (

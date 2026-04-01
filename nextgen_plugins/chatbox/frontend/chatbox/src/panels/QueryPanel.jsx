@@ -50,8 +50,8 @@ function formatCell(value) {
   return String(value);
 }
 
-export default function QueryPanel({ variableInputValues }) {
-  const queryData = variableInputValues?.chatbox_query;
+export default function QueryPanel({ variableInputValues, chatbox_query: initialQuery }) {
+  const queryData = variableInputValues?.chatbox_query || initialQuery;
   console.log("QueryPanel received data:", queryData);
 
   if (!queryData) {
