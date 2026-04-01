@@ -80,9 +80,33 @@ Replace `/path/to/nextgen_plugins` with the actual path (e.g., `/home/aquagio/te
 
 **Note:** For stdio transport, the server needs to detect the transport mode. The current server defaults to SSE on port 9000. To use stdio, you would need to either modify `mcp_server.py` to accept a `--transport` argument or set a `MCP_TRANSPORT` environment variable.
 
-## Connecting to Claude Code
+## Connecting to Claude Code (CLI)
 
-Add to your Claude Code MCP settings (`.claude/settings.json` or project-level):
+### Option 1: Via the CLI command (recommended)
+
+With the MCP server running, add it in one command:
+
+```bash
+claude mcp add nrds --transport sse http://localhost:9000/sse
+```
+
+This registers the server in your project config. Restart Claude Code to pick up the new tools.
+
+To verify it was added:
+
+```bash
+claude mcp list
+```
+
+To remove it later:
+
+```bash
+claude mcp remove nrds
+```
+
+### Option 2: Manual config file
+
+Add to `.mcp.json` in the project root or `~/.claude.json`:
 
 ```json
 {
@@ -94,6 +118,15 @@ Add to your Claude Code MCP settings (`.claude/settings.json` or project-level):
   }
 }
 ```
+
+### Usage
+
+1. Start the MCP server: `./scripts/setup-mcp.sh`
+2. In another terminal, start Claude Code: `claude`
+3. The NRDS tools are now available — ask questions like:
+   - "What models are available for NRDS?"
+   - "List available dates for cfe_nom"
+   - "Query the first output file for feature_id 1019290"
 
 ## Environment Variables
 
