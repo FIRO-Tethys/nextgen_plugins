@@ -8,6 +8,10 @@ We designed and implemented a **client plugin system** for tethysdash that allow
 
 Added a **QueryPanel** for displaying MCP query results in a table, fixed several UX issues with embedded mode rendering, and implemented **Option C (dynamic panel creation)** so panels are created automatically when the chatbox produces results.
 
+### Session 3 (2026-04-01): Tiling layout algorithm + CSS leak fix
+
+Implemented a **tiling window manager-style layout algorithm** for dynamically created panels. Panels are arranged using a generic row-packing algorithm that respects size hints from the sender. Added **batch event protocol** so multiple panels from a single prompt are laid out atomically. Fixed **CSS leak** where chatbox's `#root` styles constrained the entire tethysdash page to 960px.
+
 ---
 
 ## Implementation status
@@ -27,7 +31,8 @@ Added a **QueryPanel** for displaying MCP query results in a table, fixed severa
 | `reactapp/components/loader/AppLoader.js` | MODIFIED | Imports `clientPluginRegistry.json` and merges discovered client plugins into the visualization list by group. Also added "Client Custom" to the Default group (`client_custom_remote` type) for runtime loading via URL |
 | `reactapp/components/visualizations/utilities.js` | MODIFIED | Added `client_custom` branch (build-time, no API call) and `client_custom_remote` branch (runtime, reuses existing `ModuleLoader`) in `getVisualization()`. Both short-circuit before the backend API call. Added `visualizations` parameter to `getVisualization()`. The `client_custom_remote` branch forwards `args.initialData` as `vizData.props` for first-mount data delivery |
 | `reactapp/components/visualizations/Base.js` | MODIFIED | Added `client_custom` case in `Visualization` switch rendering `ClientModuleLoader`. Excluded `client_custom` from refresh rate interval. Passes `visualizations` to `getVisualization()`. Imports `ClientModuleLoader` |
-| `reactapp/components/dashboard/DashboardLayout.js` | MODIFIED (Session 2) | Added `useEffect` listener for `tethysdash:add-visualization` DOM events. Creates new grid items dynamically via `updateTab()`. Deduplicates by `args.module` to prevent duplicate panels. Imports `useEffect` and `uuidv4` |
+| `reactapp/components/dashboard/DashboardLayout.js` | MODIFIED (Session 2+3) | Added `useEffect` listener for `tethysdash:add-visualization` DOM events. Supports both batch and single events. For batches: filters duplicates, calls `computePanelLayout()`, creates all grid items in a single `updateTab()` call. Imports `useEffect`, `uuidv4`, and `computePanelLayout` |
+| `reactapp/components/dashboard/panelLayoutUtils.js` | CREATED (Session 3) | Generic tiling layout utility. `computePanelLayout(panels, existingGridItems)` arranges panels using row-packing. Single panels scan bottom-to-top for horizontal space; if found, slot in side-by-side at hint width; if not, start a new row at full width. Batch panels pack left-to-right, wrapping when the row fills. Panels alone on their row expand to full width. No knowledge of specific plugin types |
 
 #### Chatbox MFE (`plugins/nextgen_plugins/nextgen_plugins/chatbox/frontend/chatbox/`)
 
@@ -37,7 +42,7 @@ Added a **QueryPanel** for displaying MCP query results in a table, fixed severa
 | `src/panels/MapPanel.jsx` | CREATED | Reads `variableInputValues.chatbox_map` (falls back to `chatbox_map` initial prop). Renders `FlowpathsPmtilesMap` |
 | `src/panels/MarkdownPanel.jsx` | CREATED | Reads `variableInputValues.chatbox_markdown` (falls back to `chatbox_markdown` initial prop). Renders `MarkdownContent` |
 | `src/panels/QueryPanel.jsx` | CREATED (Session 2) | Reads `variableInputValues.chatbox_query` (falls back to `chatbox_query` initial prop). Displays query results in a scrollable table with sticky headers and alternating row colors. Parses both row-oriented and columnar data shapes. Reads `response.data` (the actual row array from the MCP response) and `response.columns` for column headers |
-| `src/chatbox.jsx` | MODIFIED | Accepts `updateVariableInputValues`/`variableInputValues` props. Detects embedded mode via `isEmbedded = typeof updateVariableInputValues === "function"`. Publishes `chatbox_chart`/`chatbox_map`/`chatbox_markdown`/`chatbox_query` to variable inputs after LLM results. Dispatches `tethysdash:add-visualization` DOM events for Option C dynamic panel creation with `initialData` for first-mount delivery. Shows text indicators when embedded. User messages always render their original text. Thinking streams in the chat bubble in both modes. Derives MFE URL from `import.meta.url`. Skips Ollama model discovery when embedded |
+| `src/chatbox.jsx` | MODIFIED | Accepts `updateVariableInputValues`/`variableInputValues` props. Detects embedded mode via `isEmbedded = typeof updateVariableInputValues === "function"`. Publishes `chatbox_chart`/`chatbox_map`/`chatbox_markdown`/`chatbox_query` to variable inputs after LLM results. Dispatches a single batch `tethysdash:add-visualization` event with `PANEL_HINTS` (w/h/priority per panel type) for layout. Sorts panels by priority so visual panels (map, chart) get prominent positions. Shows text indicators when embedded. User messages always render their original text. Thinking streams in the chat bubble in both modes. Derives MFE URL from `import.meta.url`. Skips Ollama model discovery when embedded |
 | `src/lib/chatboxEngine.js` | MODIFIED (Session 2) | Added `lastQuerySQL` to state. Captures SQL string from `args.query` when query tools run. Returns `queryResult: { data, sql }` alongside `assistantText` for query results (`QUERY_RESULT_TOOLS`) and hydrofabric results (`HYDROFABRIC_QUERY_TOOL`) |
 | `src/App.css` | MODIFIED (Session 2) | Changed `#root` selector to `.chatbox-standalone` to prevent CSS leaking into tethysdash host page |
 | `index.html` | MODIFIED (Session 2) | Added `class="chatbox-standalone"` to `#root` div for standalone mode |
@@ -195,10 +200,18 @@ QueryPanel reads `queryData.data.data` for table rows and `queryData.data.column
 
 ### Option C: Dynamic panel creation
 
-- **DashboardLayout.js**: Added `useEffect` listener for `tethysdash:add-visualization` DOM events. Deduplicates by `args.module` (not by source name, since all dynamic panels share `source: "Client Custom"`). New panels default to `y: Infinity` (bottom of dashboard), `w: 50` (half-width).
-- **chatbox.jsx**: Dispatches `tethysdash:add-visualization` events after publishing to `variableInputValues`. Passes `initialData` in args so panels have data at mount time. MFE URL is auto-derived from `import.meta.url`.
+- **DashboardLayout.js**: Added `useEffect` listener for `tethysdash:add-visualization` DOM events. Supports both batch and single events. For batches: filters duplicates by `args.module`, calls `computePanelLayout()` from `panelLayoutUtils.js`, creates all grid items in a single `updateTab()` call. Single events still work for backward compat.
+- **chatbox.jsx**: Dispatches a single batch `tethysdash:add-visualization` event with all panels from the response. Each panel includes `w`/`h` size hints and is sorted by priority (visual panels first). `initialData` is passed in args for first-mount delivery. MFE URL is auto-derived from `import.meta.url`.
 - **utilities.js**: `client_custom_remote` branch forwards `args.initialData` as `vizData.props`.
 - **All panels**: Accept their specific variable key as a destructured prop fallback (e.g., `chatbox_query: initialQuery`), used when `variableInputValues` context hasn't propagated yet.
+
+### Tiling layout algorithm (Session 3)
+
+- **panelLayoutUtils.js** (new): Generic layout utility inspired by tiling window managers (i3/dwm). `computePanelLayout(panels, existingGridItems)` arranges panels without any knowledge of specific plugin types.
+- **Single-panel path**: Scans existing rows bottom-to-top looking for horizontal space. If space is found, panel slots in side-by-side at its hint width. If no space exists, starts a new row at full width (`w:100`).
+- **Batch path**: Packs panels left-to-right into rows, wrapping when the next panel doesn't fit. Panels alone on their row expand to full width. Respects each panel's `w`/`h` hints — column count is derived naturally from `floor(100 / panelW)`.
+- **chatbox.jsx**: `PANEL_HINTS` map provides `w`/`h`/`priority` per panel type. Panels sorted by priority before dispatch so visual panels (map, chart) get prominent top-row positions.
+- **Event protocol**: Batch events use `{ batch: true, panels: [{args, w, h}] }`. Size hints are optional — tethysdash falls back to `w:50, h:20` if not provided. Any plugin can use the same protocol.
 
 ### Embedded mode UX fixes (`src/chatbox.jsx`)
 
@@ -281,6 +294,10 @@ QueryPanel reads `queryData.data.data` for table rows and `queryData.data.column
 
 8. **Scoped MFE CSS** -- MFE stylesheets must not use global selectors like `#root` that match the host page. The chatbox's `App.css` uses `.chatbox-standalone` instead. This is a general rule for any MFE loaded into tethysdash.
 
+9. **Generic layout utility** -- `panelLayoutUtils.js` has zero knowledge of chatbox or any specific plugin. It takes panels with optional `w`/`h` hints and existing grid items, returns positions. Plugin-specific knowledge (panel dimensions, priority) lives in the sender (chatbox). This separation means any plugin can use the same `tethysdash:add-visualization` event with its own hints.
+
+10. **Batch event protocol** -- Multiple panels from a single action are dispatched as one batch event (`batch: true`), laid out atomically in a single `updateTab()` call. This prevents intermediate states where panels are partially placed. Single events still work for backward compat.
+
 ---
 
 ## Key file locations
@@ -293,6 +310,7 @@ QueryPanel reads `queryData.data.data` for table rows and `queryData.data.column
 - `tethysapp-tethys_dash/reactapp/components/visualizations/Base.js`
 - `tethysapp-tethys_dash/reactapp/components/visualizations/utilities.js`
 - `tethysapp-tethys_dash/reactapp/components/dashboard/DashboardLayout.js`
+- `tethysapp-tethys_dash/reactapp/components/dashboard/panelLayoutUtils.js`
 - `tethysapp-tethys_dash/reactapp/components/loader/AppLoader.js`
 
 ### Chatbox MFE

@@ -680,6 +680,70 @@ MFE stylesheets **must not** use global selectors (like `#root`, `body`, `html`)
 
 ---
 
+## Tiling Layout Algorithm (IMPLEMENTED)
+
+Dynamic panels are arranged using a tiling window manager-style algorithm in `panelLayoutUtils.js`. The utility is fully generic — it has no knowledge of specific plugins or panel types.
+
+### Event protocol
+
+Batch event payload:
+```javascript
+{
+  source: "Client Custom",
+  batch: true,
+  panels: [
+    { args: { module, url, scope, remoteType, initialData }, w: 50, h: 30 },
+    { args: { module, url, scope, remoteType, initialData }, w: 50, h: 25 },
+  ]
+}
+```
+
+- `w` and `h` are optional size hints. Default: `w:50, h:20`
+- Panels are sorted by the sender (e.g., chatbox sorts by priority: map > chart > query > markdown)
+- Single (non-batch) events still work for backward compat
+
+### Layout rules
+
+**Single panel (across separate prompts):**
+1. Scan existing rows bottom-to-top for horizontal space
+2. If `rightEdge + panelW <= 100` → slot in side-by-side at hint width
+3. If no row has space → start a new row at **full width** (`w:100`)
+
+**Batch (multiple panels from one prompt):**
+1. Pack panels left-to-right into rows using each panel's `w` hint
+2. When `rowX + panel.w > 100`, wrap to a new row
+3. Panels alone on their row expand to full width (`w:100`)
+4. Column count derives naturally: `floor(100 / panelW)`
+
+### Examples
+
+```
+w:50 panels → 2 per row
+┌────────────────┬─────────────────┐
+│  Panel (w:50)  │  Panel (w:50)   │
+└────────────────┴─────────────────┘
+
+w:33 panels → 3 per row
+┌──────────┬──────────┬───────────┐
+│  (w:33)  │  (w:33)  │  (w:33)   │
+└──────────┴──────────┴───────────┘
+
+Single panel, no space → full width
+┌──────────────────────────────────┐
+│       Panel (expanded w:100)     │
+└──────────────────────────────────┘
+
+Mixed: chatbox w:40, query w:50 fits next to it
+┌────────────┬─────────────────────┐
+│ Chatbox    │ QueryPanel (w:50)   │
+│ (w:40)     │ slotted in          │
+├────────────┴─────────────────────┤
+│ ChartPanel (w:100, full width)   │
+└──────────────────────────────────┘
+```
+
+---
+
 ## Files to Create/Modify Summary
 
 ### TethysDash changes (IMPLEMENTED)
@@ -704,17 +768,18 @@ MFE stylesheets **must not** use global selectors (like `#root`, `body`, `html`)
 | CREATE | `src/panels/MapPanel.jsx` | Reads `variableInputValues.chatbox_map` (falls back to `chatbox_map` initial prop), renders FlowpathsPmtilesMap |
 | CREATE | `src/panels/MarkdownPanel.jsx` | Reads `variableInputValues.chatbox_markdown` (falls back to `chatbox_markdown` initial prop), renders MarkdownContent |
 | CREATE | `src/panels/QueryPanel.jsx` | Reads `variableInputValues.chatbox_query` (falls back to `chatbox_query` initial prop), renders scrollable HTML table |
-| MODIFY | `src/chatbox.jsx` | Accepts updateVariableInputValues/variableInputValues props; detects embedded mode; publishes chatbox_chart/chatbox_map/chatbox_markdown/chatbox_query; dispatches `tethysdash:add-visualization` events for Option C; derives MFE URL from `import.meta.url`; shows text indicators when embedded |
+| MODIFY | `src/chatbox.jsx` | Accepts updateVariableInputValues/variableInputValues props; detects embedded mode; publishes variables; dispatches batch `tethysdash:add-visualization` event with `PANEL_HINTS` (w/h/priority); sorts panels by priority; derives MFE URL from `import.meta.url`; shows text indicators when embedded |
 | MODIFY | `src/lib/chatboxEngine.js` | Returns `queryResult: { data, sql }` for query/hydrofabric results |
 | MODIFY | `src/App.css` | Changed `#root` to `.chatbox-standalone` to prevent CSS leaking into host page |
 | MODIFY | `index.html` | Added `class="chatbox-standalone"` to `#root` div for standalone mode |
 | MODIFY | `vite.config.js` | Exposes `./QueryPanel` via Module Federation |
 
-### TethysDash changes for Option C (IMPLEMENTED)
+### TethysDash changes for Option C + Layout (IMPLEMENTED)
 
 | Action | File | Description |
 |--------|------|-------------|
-| MODIFY | `reactapp/components/dashboard/DashboardLayout.js` | Added `useEffect` listener for `tethysdash:add-visualization` DOM events; deduplicates by `args.module`; imports `useEffect` and `uuidv4` |
+| CREATE | `reactapp/components/dashboard/panelLayoutUtils.js` | Generic tiling layout utility. `computePanelLayout(panels, existingGridItems)` — row-packing with full-width expansion for lone panels |
+| MODIFY | `reactapp/components/dashboard/DashboardLayout.js` | Supports batch + single events; filters duplicates; calls `computePanelLayout()`; creates all items in one `updateTab()` call |
 | MODIFY | `reactapp/components/visualizations/utilities.js` | `client_custom_remote` branch forwards `args.initialData` as `vizData.props` |
 
 ### Remaining work (NOT YET IMPLEMENTED)
