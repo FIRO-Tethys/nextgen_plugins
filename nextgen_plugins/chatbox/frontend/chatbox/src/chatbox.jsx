@@ -180,30 +180,60 @@ function ChatBox({ thinkingEnabled = false, model = "qwen3", modelOptions = [mod
         // Panels are created only if they don't already exist on the dashboard.
         // Initial data is passed via args so it's available at mount time
         // before the variableInputValues context propagates.
+        // Size hints (w, h) and priority are sent so the dashboard layout
+        // utility can arrange panels without knowing chatbox-specific types.
+        const PANEL_HINTS = {
+          "./MapPanel":      { w: 50, h: 35, priority: 0 },
+          "./ChartPanel":    { w: 50, h: 30, priority: 1 },
+          "./QueryPanel":    { w: 50, h: 25, priority: 2 },
+          "./MarkdownPanel": { w: 50, h: 20, priority: 3 },
+        };
+
         const mfeUrl =
           window.__CHATBOX_MFE_URL__ ||
           new URL("remoteEntry.js", import.meta.url).href;
-        const requestPanel = (module, initialData) => {
+        const mfeArgs = {
+          url: mfeUrl,
+          scope: "mfe_nrds_chatbox",
+          remoteType: "vite-esm",
+        };
+
+        const panelsToCreate = [];
+        if (result.plotlyFigure) {
+          panelsToCreate.push({ module: "./ChartPanel", initialData: { chatbox_chart: result.plotlyFigure } });
+        }
+        if (result.mapConfig) {
+          panelsToCreate.push({ module: "./MapPanel", initialData: { chatbox_map: result.mapConfig } });
+        }
+        if (result.queryResult) {
+          panelsToCreate.push({ module: "./QueryPanel", initialData: { chatbox_query: result.queryResult } });
+        }
+        if (result.assistantText && !result.plotlyFigure && !result.mapConfig && !result.queryResult) {
+          panelsToCreate.push({ module: "./MarkdownPanel", initialData: { chatbox_markdown: result.assistantText } });
+        }
+
+        if (panelsToCreate.length > 0) {
+          // Sort by priority so visual panels (map, chart) get prominent positions
+          panelsToCreate.sort(
+            (a, b) => (PANEL_HINTS[a.module]?.priority ?? 99) - (PANEL_HINTS[b.module]?.priority ?? 99),
+          );
+
           window.dispatchEvent(
             new CustomEvent("tethysdash:add-visualization", {
               detail: {
                 source: "Client Custom",
-                args: {
-                  url: mfeUrl,
-                  scope: "mfe_nrds_chatbox",
-                  module,
-                  remoteType: "vite-esm",
-                  initialData,
-                },
+                batch: true,
+                panels: panelsToCreate.map((p) => {
+                  const hints = PANEL_HINTS[p.module] || {};
+                  return {
+                    args: { ...mfeArgs, module: p.module, initialData: p.initialData },
+                    w: hints.w,
+                    h: hints.h,
+                  };
+                }),
               },
             }),
           );
-        };
-        if (result.plotlyFigure) requestPanel("./ChartPanel", { chatbox_chart: result.plotlyFigure });
-        if (result.mapConfig) requestPanel("./MapPanel", { chatbox_map: result.mapConfig });
-        if (result.queryResult) requestPanel("./QueryPanel", { chatbox_query: result.queryResult });
-        if (result.assistantText && !result.plotlyFigure && !result.mapConfig && !result.queryResult) {
-          requestPanel("./MarkdownPanel", { chatbox_markdown: result.assistantText });
         }
       }
 
