@@ -672,6 +672,12 @@ The chatbox must work in two modes:
 
 Detection: check if `props.updateVariableInputValues` exists. If yes, the chatbox is inside tethysdash and should publish to variables. If no, render inline.
 
+### CSS scoping for MFEs
+
+MFE stylesheets **must not** use global selectors (like `#root`, `body`, `html`) that match elements in the host page. When a Vite MFE is loaded via Module Federation, its CSS is injected into the host document and applies globally. The chatbox's `App.css` originally had `#root { max-width: 960px }` which constrained tethysdash's entire `#root` element to 960px.
+
+**Rule:** Use scoped class selectors (e.g., `.chatbox-standalone`) instead of ID or element selectors. Apply the class in the standalone `index.html` so the styles only take effect when the MFE runs on its own.
+
 ---
 
 ## Files to Create/Modify Summary
@@ -700,6 +706,8 @@ Detection: check if `props.updateVariableInputValues` exists. If yes, the chatbo
 | CREATE | `src/panels/QueryPanel.jsx` | Reads `variableInputValues.chatbox_query` (falls back to `chatbox_query` initial prop), renders scrollable HTML table |
 | MODIFY | `src/chatbox.jsx` | Accepts updateVariableInputValues/variableInputValues props; detects embedded mode; publishes chatbox_chart/chatbox_map/chatbox_markdown/chatbox_query; dispatches `tethysdash:add-visualization` events for Option C; derives MFE URL from `import.meta.url`; shows text indicators when embedded |
 | MODIFY | `src/lib/chatboxEngine.js` | Returns `queryResult: { data, sql }` for query/hydrofabric results |
+| MODIFY | `src/App.css` | Changed `#root` to `.chatbox-standalone` to prevent CSS leaking into host page |
+| MODIFY | `index.html` | Added `class="chatbox-standalone"` to `#root` div for standalone mode |
 | MODIFY | `vite.config.js` | Exposes `./QueryPanel` via Module Federation |
 
 ### TethysDash changes for Option C (IMPLEMENTED)

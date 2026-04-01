@@ -39,6 +39,8 @@ Added a **QueryPanel** for displaying MCP query results in a table, fixed severa
 | `src/panels/QueryPanel.jsx` | CREATED (Session 2) | Reads `variableInputValues.chatbox_query` (falls back to `chatbox_query` initial prop). Displays query results in a scrollable table with sticky headers and alternating row colors. Parses both row-oriented and columnar data shapes. Reads `response.data` (the actual row array from the MCP response) and `response.columns` for column headers |
 | `src/chatbox.jsx` | MODIFIED | Accepts `updateVariableInputValues`/`variableInputValues` props. Detects embedded mode via `isEmbedded = typeof updateVariableInputValues === "function"`. Publishes `chatbox_chart`/`chatbox_map`/`chatbox_markdown`/`chatbox_query` to variable inputs after LLM results. Dispatches `tethysdash:add-visualization` DOM events for Option C dynamic panel creation with `initialData` for first-mount delivery. Shows text indicators when embedded. User messages always render their original text. Thinking streams in the chat bubble in both modes. Derives MFE URL from `import.meta.url`. Skips Ollama model discovery when embedded |
 | `src/lib/chatboxEngine.js` | MODIFIED (Session 2) | Added `lastQuerySQL` to state. Captures SQL string from `args.query` when query tools run. Returns `queryResult: { data, sql }` alongside `assistantText` for query results (`QUERY_RESULT_TOOLS`) and hydrofabric results (`HYDROFABRIC_QUERY_TOOL`) |
+| `src/App.css` | MODIFIED (Session 2) | Changed `#root` selector to `.chatbox-standalone` to prevent CSS leaking into tethysdash host page |
+| `index.html` | MODIFIED (Session 2) | Added `class="chatbox-standalone"` to `#root` div for standalone mode |
 | `vite.config.js` | MODIFIED | Exposes `./ChartPanel`, `./MapPanel`, `./MarkdownPanel`, `./QueryPanel` alongside `./Chatbox` via Module Federation |
 
 #### Backend plugin (`plugins/nextgen_plugins/nextgen_plugins/chatbox/chatjs.py`)
@@ -251,6 +253,14 @@ QueryPanel reads `queryData.data.data` for table rows and `queryData.data.column
 
 **Fix:** Pass initial data through the grid item's `args.initialData`. `getVisualization()` forwards it as `vizData.props`, `ModuleLoader` spreads it onto the component. All panels accept their variable key as a destructured prop fallback (e.g., `chatbox_query: initialQuery`).
 
+### MFE CSS leaking into host page (Session 2)
+
+**Problem:** The chatbox's `App.css` had a `#root` selector with `max-width: 960px; margin: 0 auto`. When the chatbox loaded as an MFE inside tethysdash, this CSS leaked globally and matched tethysdash's own `#root` element, constraining the entire dashboard to 960px.
+
+**Fix:** Changed `#root` to `.chatbox-standalone` class selector in `App.css`. Added `class="chatbox-standalone"` to `index.html` so standalone mode retains the centered layout. The MFE no longer affects the host page's `#root`.
+
+**Files:** `src/App.css`, `index.html`
+
 ---
 
 ## Key architectural decisions
@@ -268,6 +278,8 @@ QueryPanel reads `queryData.data.data` for table rows and `queryData.data.column
 6. **Dual data delivery for Option C** -- Initial data travels via `args.initialData` -> `vizData.props` -> component props (synchronous, available at mount). Subsequent updates travel via `variableInputValues` context (reactive, survives re-renders). Panels prefer context when available, fall back to initial props.
 
 7. **MFE URL auto-discovery** -- `import.meta.url` provides the chatbox module's absolute URL at runtime. `new URL("remoteEntry.js", import.meta.url)` resolves to the correct remoteEntry regardless of where the MFE is served.
+
+8. **Scoped MFE CSS** -- MFE stylesheets must not use global selectors like `#root` that match the host page. The chatbox's `App.css` uses `.chatbox-standalone` instead. This is a general rule for any MFE loaded into tethysdash.
 
 ---
 
