@@ -66,6 +66,12 @@ export function buildSystemMessage() {
     content: [
       "You may call tools.",
       "",
+      "Conversation context:",
+      "You have access to the full conversation history including previous tool calls, their parameters, and their results.",
+      "When the user references previous results (e.g., 'make it a table', 'use the same parameters', 'change the model to lstm', 'now show velocity instead'), reuse the parameters from the most recent relevant tool call.",
+      "Do not ask the user to repeat parameters that are already visible in the conversation history.",
+      "If the user says 'make it a table', call query_output_file_from_output_selector with the same parameters as the previous chart tool call.",
+      "",
       "Global rules:",
       "1) Respond in English only.",
       "2) Never answer in Arabic, Turkish, Spanish, or any other non-English language unless the user explicitly asks for translation.",

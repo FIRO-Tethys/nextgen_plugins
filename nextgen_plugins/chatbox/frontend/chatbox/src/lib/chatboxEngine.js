@@ -22,6 +22,7 @@ import {
   invalidOutputFileToolResult,
   stripThinkTags
 } from "./chatboxHelpers";
+import { trimConversation } from "./chatboxConversation";
 import { buildSystemMessage } from "./chatboxMessages";
 
 const CONFIGURED_OLLAMA_HOST = (import.meta.env.VITE_OLLAMA_HOST ?? "http://localhost:11434").replace(/\/+$/, "");
@@ -425,6 +426,8 @@ export async function runChatSession({
   ollamaHost = DEFAULT_OLLAMA_HOST,
   ollamaApiKey = DEFAULT_OLLAMA_API_KEY,
   mcpServerUrl = DEFAULT_MCP_SERVER_URL,
+  history,
+  maxContextTokens,
 }) {
   const state = {
     lastChartResult: null,
@@ -443,7 +446,12 @@ export async function runChatSession({
     ollamaOpts.headers = { Authorization: `Bearer ${ollamaApiKey}` };
   }
   const ollamaClient = new Ollama(ollamaOpts);
-  const messages = [buildSystemMessage()];
+
+  // Build on previous conversation if history is provided, otherwise start fresh.
+  let messages =
+    Array.isArray(history) && history.length > 0
+      ? [...history]
+      : [buildSystemMessage()];
 
   const text = typeof prompt === "string" ? prompt : "";
 
@@ -458,6 +466,11 @@ export async function runChatSession({
 
   try {
     messages.push({ role: "user", content: text });
+
+    // Trim old turns if conversation exceeds token budget
+    if (maxContextTokens && maxContextTokens > 0) {
+      messages = trimConversation(messages, maxContextTokens);
+    }
 
     const fileUrl = extractFileUrl(text);
     const kind = fileKind(fileUrl ?? "");

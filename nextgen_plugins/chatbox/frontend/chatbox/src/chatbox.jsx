@@ -2,9 +2,11 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { runChatSession } from "./lib/chatboxEngine";
 import { listOllamaModels } from "./lib/chatboxHelpers";
+import { estimateTokens } from "./lib/chatboxConversation";
 import MarkdownContent from "./components/markdownContent";
 import PlotlyChart from "./components/PlotlyChart";
 import FlowpathsPmtilesMap from "./components/FlowpathsPmtilesMap";
+import ContextUsageIndicator from "./components/ContextUsageIndicator";
 import "./chatbox.css";
 
 const OLLAMA_API_KEY = (import.meta.env.VITE_OLLAMA_API_KEY ?? "").trim();
@@ -24,6 +26,8 @@ function ChatBox({ thinkingEnabled = false, model = "qwen3", modelOptions = [mod
   const [loadingModels, setLoadingModels] = useState(false);
   const [discoveredModels, setDiscoveredModels] = useState([]);
   const [error, setError] = useState("");
+  const engineMessagesRef = useRef([]);
+  const [contextUsage, setContextUsage] = useState({ used: 0, total: 0 });
   const configuredModels = useMemo(
     () => (Array.isArray(modelOptions) && modelOptions.length ? modelOptions : [model]),
     [modelOptions, model]
@@ -107,6 +111,13 @@ function ChatBox({ thinkingEnabled = false, model = "qwen3", modelOptions = [mod
     }
   }, [availableModels, selectedModel]);
 
+  // Update context total when model changes; preserve conversation history
+  useEffect(() => {
+    const modelInfo = discoveredModels.find((m) => m.name === selectedModel);
+    const total = modelInfo?.contextLength ?? 8192;
+    setContextUsage((prev) => ({ ...prev, total }));
+  }, [selectedModel, discoveredModels]);
+
   const sendMessage = async () => {
     const userText = input.trim();
     if (!userText || loading) {
@@ -132,6 +143,8 @@ function ChatBox({ thinkingEnabled = false, model = "qwen3", modelOptions = [mod
         model: selectedModel,
         thinkingEnabled: isThinkingEnabled,
         signal: controller.signal,
+        history: engineMessagesRef.current,
+        maxContextTokens: Math.floor(contextUsage.total * 0.8),
         ...(ollamaHost ? { ollamaHost } : {}),
         ...(mcpServerUrl ? { mcpServerUrl } : {}),
         onThinkingChunk: (chunk) => {
@@ -153,6 +166,15 @@ function ChatBox({ thinkingEnabled = false, model = "qwen3", modelOptions = [mod
       });
 
       console.log("Chat session completed with result:", result);
+
+      // Persist conversation for next turn and update token usage
+      if (result.messages) {
+        engineMessagesRef.current = result.messages;
+        setContextUsage((prev) => ({
+          ...prev,
+          used: estimateTokens(result.messages),
+        }));
+      }
 
       const content = result.aborted
         ? (accumulatedContent || "(Stopped)")
@@ -303,6 +325,7 @@ function ChatBox({ thinkingEnabled = false, model = "qwen3", modelOptions = [mod
               <option value="">{loadingModels ? "Loading..." : "No models"}</option>
             )}
           </select>
+          <ContextUsageIndicator used={contextUsage.used} total={contextUsage.total} />
         </div>
         {loading ? (
           <button
