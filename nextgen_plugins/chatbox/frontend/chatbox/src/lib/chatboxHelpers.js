@@ -705,6 +705,23 @@ function canonicalOllamaModelKey(modelName) {
     : `${normalized}:latest`.toLowerCase();
 }
 
+/**
+ * Extract context_length from an /api/show response.
+ * The key name varies by architecture (e.g., "qwen3.5.context_length",
+ * "gemma3.context_length") but always ends with ".context_length".
+ */
+function extractContextLength(showPayload) {
+  const modelInfo = showPayload?.model_info;
+  if (!modelInfo || typeof modelInfo !== "object") return null;
+  for (const key of Object.keys(modelInfo)) {
+    if (key.endsWith(".context_length")) {
+      const val = modelInfo[key];
+      return typeof val === "number" && val > 0 ? val : null;
+    }
+  }
+  return null;
+}
+
 function parseModelCapabilities(entry) {
   if (!entry || typeof entry !== "object") return [];
   const caps = entry.capabilities ?? entry.details?.capabilities;
@@ -756,12 +773,13 @@ export async function listOllamaModels(ollamaHost = DEFAULT_OLLAMA_HOST, options
       .values()
   );
 
-  // Try /api/show for capability inspection (works on local Ollama).
+  // Try /api/show for capability + context length inspection (works on local Ollama).
   // If it fails (e.g. Ollama Cloud 404), fall back to /api/tags capabilities.
   const inspectedModels = await Promise.all(
     modelEntries.map(async (modelName) => {
       const canonKey = canonicalOllamaModelKey(modelName);
       let capabilities = tagsCapsMap.get(canonKey) ?? [];
+      let contextLength = null;
 
       try {
         const showResponse = await fetch(`${host}/api/show`, {
@@ -779,6 +797,7 @@ export async function listOllamaModels(ollamaHost = DEFAULT_OLLAMA_HOST, options
           if (showCaps.length) {
             capabilities = showCaps;
           }
+          contextLength = extractContextLength(showPayload);
         }
       } catch {
         console.log(`Could not fetch capabilities for model ${modelName} from /api/show, falling back to /api/tags if available.`);
@@ -789,7 +808,7 @@ export async function listOllamaModels(ollamaHost = DEFAULT_OLLAMA_HOST, options
         return null;
       }
 
-      return { name: modelName, capabilities };
+      return { name: modelName, capabilities, contextLength };
     })
   );
 
