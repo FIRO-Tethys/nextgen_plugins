@@ -122,7 +122,7 @@
 }
 
 .chart-panel {
-  margin-top: 0.65rem;
+  /* margin-top: 0.65rem; */
   border: 1px solid #c8d8e2;
   border-radius: 10px;
   background: #ffffff;

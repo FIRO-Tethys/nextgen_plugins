@@ -40,7 +40,7 @@ export default function MarkdownContent({ content }) {
   if (jsonContent) {
     return (
       <div className="max-w-none">
-        <SyntaxHighlighter style={oneDark} language="json" PreTag="div" wrapLongLines>
+        <SyntaxHighlighter style={oneDark} language="json" PreTag="div" wrapLongLines customStyle={{ margin: 0 }}>
           {jsonContent}
         </SyntaxHighlighter>
       </div>
@@ -65,6 +65,7 @@ export default function MarkdownContent({ content }) {
                   language={match[1]}
                   PreTag="div"
                   wrapLongLines
+                  customStyle={{ margin: 0 }}
                   {...props}
                 >
                   {String(children).replace(/\n$/, "")}

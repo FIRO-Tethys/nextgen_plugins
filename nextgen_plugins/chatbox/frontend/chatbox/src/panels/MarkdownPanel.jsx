@@ -1,15 +1,20 @@
 import MarkdownContent from "../components/markdownContent";
+import { panelStyle, panelEmptyStyle } from "./panelStyles";
 
 export default function MarkdownPanel({ variableInputValues, chatbox_markdown: initialMarkdown }) {
   const content = variableInputValues?.chatbox_markdown || initialMarkdown;
 
   if (!content) {
     return (
-      <div style={{ display: "flex", alignItems: "center", justifyContent: "center", height: "100%", color: "#888" }}>
+      <div style={panelEmptyStyle}>
         <p>Results will appear here</p>
       </div>
     );
   }
 
-  return <MarkdownContent content={content} />;
+  return (
+    <div style={{ ...panelStyle, overflow: "auto" }}>
+      <MarkdownContent content={content} />
+    </div>
+  );
 }

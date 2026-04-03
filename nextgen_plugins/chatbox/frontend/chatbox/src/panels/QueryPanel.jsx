@@ -50,13 +50,15 @@ function formatCell(value) {
   return String(value);
 }
 
+import { panelStyle, panelEmptyStyle } from "./panelStyles";
+
 export default function QueryPanel({ variableInputValues, chatbox_query: initialQuery }) {
   const queryData = variableInputValues?.chatbox_query || initialQuery;
   console.log("QueryPanel received data:", queryData);
 
   if (!queryData) {
     return (
-      <div style={{ display: "flex", alignItems: "center", justifyContent: "center", height: "100%", color: "#888" }}>
+      <div style={panelEmptyStyle}>
         <p>Query results will appear here</p>
       </div>
     );
@@ -68,7 +70,7 @@ export default function QueryPanel({ variableInputValues, chatbox_query: initial
   const columns = response?.columns ?? getColumns(rows);
 
   return (
-    <div style={{ display: "flex", flexDirection: "column", height: "100%", overflow: "hidden" }}>
+    <div style={{ ...panelStyle, display: "flex", flexDirection: "column", overflow: "hidden" }}>
       <div style={{
         padding: "8px 12px",
         borderBottom: "1px solid #eee",
