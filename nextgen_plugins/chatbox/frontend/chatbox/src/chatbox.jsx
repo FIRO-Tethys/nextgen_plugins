@@ -70,19 +70,12 @@ function ChatBox({ thinkingEnabled = false, model = "qwen3", modelOptions = [mod
   }, [isThinkingEnabled]);
 
   useEffect(() => {
-    // When embedded in tethysdash, skip Ollama model discovery (CORS blocked)
-    // and use the models provided via props from the backend plugin.
-    if (isEmbedded) {
-      setDiscoveredModels(
-        configuredModels.map((name) => ({ name, capabilities: ["tools"] }))
-      );
-      return;
-    }
-
     let cancelled = false;
     setLoadingModels(true);
 
-    listOllamaModels(undefined, {
+    // When embedded, use the ollamaHost prop (points to the Vite preview
+    // server which proxies /api to Ollama, avoiding CORS).
+    listOllamaModels(isEmbedded ? ollamaHost : undefined, {
       extraModels: configuredModels,
       requiredCapabilities: REQUIRED_MODEL_CAPABILITIES,
     })
@@ -103,7 +96,7 @@ function ChatBox({ thinkingEnabled = false, model = "qwen3", modelOptions = [mod
     return () => {
       cancelled = true;
     };
-  }, [configuredModels, isEmbedded]);
+  }, [configuredModels, isEmbedded, ollamaHost]);
 
   useEffect(() => {
     if (!availableModels.length) {
