@@ -554,12 +554,8 @@ export async function runChatSession({
         };
       }
 
-      if (!hadError && state.lastListResult) {
-        return {
-          assistantText: JSON.stringify(state.lastListResult),
-          messages,
-        };
-      }
+      // No early return for lastListResult — let the LLM chain discovery
+      // tools or produce a human-readable text response.
 
       if (!hadError && state.lastMapResult) {
         return {
@@ -581,9 +577,9 @@ export async function runChatSession({
         messages.push({
           role: "user",
           content:
-            `Continue solving the original request using the tool result above. ` +
-            `Do not ask for clarification if enough information already exists. ` +
-            `If the original request already implies a SQL query, derive it and call the next tool now. ` +
+            `Use the tool result above to continue. ` +
+            `If the user's request is fully answered, respond with a clear, readable summary — do not return raw JSON. ` +
+            `If more tool calls are needed to fulfill the request, make them now. ` +
             `Original request: ${text}`,
         });
         continue;

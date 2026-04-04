@@ -186,7 +186,11 @@ function ChatBox({ thinkingEnabled = false, model = "qwen3", modelOptions = [mod
         if (result.plotlyFigure) updates.chatbox_chart = result.plotlyFigure;
         if (result.mapConfig) updates.chatbox_map = result.mapConfig;
         if (result.queryResult) updates.chatbox_query = result.queryResult;
-        if (result.assistantText) updates.chatbox_markdown = result.assistantText;
+        // Only publish text to markdown panel when it accompanies a data result.
+        // Text-only responses (discovery, explanations) stay in the chat bubble.
+        if (result.assistantText && (result.plotlyFigure || result.mapConfig || result.queryResult)) {
+          updates.chatbox_markdown = result.assistantText;
+        }
         if (Object.keys(updates).length > 0) {
           updateVariableInputValues(updates);
         }
@@ -223,9 +227,8 @@ function ChatBox({ thinkingEnabled = false, model = "qwen3", modelOptions = [mod
         if (result.queryResult) {
           panelsToCreate.push({ module: "./QueryPanel", initialData: { chatbox_query: result.queryResult } });
         }
-        if (result.assistantText && !result.plotlyFigure && !result.mapConfig && !result.queryResult) {
-          panelsToCreate.push({ module: "./MarkdownPanel", initialData: { chatbox_markdown: result.assistantText } });
-        }
+        // Text-only responses (discovery, explanations) stay in the chat —
+        // no MarkdownPanel created for them.
 
         if (panelsToCreate.length > 0) {
           // Sort by priority so visual panels (map, chart) get prominent positions
@@ -411,11 +414,7 @@ function ChatBox({ thinkingEnabled = false, model = "qwen3", modelOptions = [mod
                     <MarkdownContent content={message.content || JSON.stringify(message.queryResult.data, null, 2)} />
                   )
                 ) : message.content ? (
-                  isEmbedded ? (
-                    <p className="chat-panel-indicator">Response sent to panels</p>
-                  ) : (
-                    <MarkdownContent content={message.content} />
-                  )
+                  <MarkdownContent content={message.content} />
                 ) : null}
               </article>
             </div>
