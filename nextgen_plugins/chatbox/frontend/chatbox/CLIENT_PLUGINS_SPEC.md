@@ -1,10 +1,12 @@
-# Client Plugins for TethysDash: NPM-Based Microfrontend Integration
+# NextGen Chatbox Plugin — Architecture Spec
+
+> **Scope:** This document covers the nextgen_plugins chatbox MFE, panels, MCP server, and engine.
+> For tethysdash-side changes (sidebar, grid layout, custom settings), see `tethysapp-tethys_dash/TETHYSDASH_ARCHITECTURE.md`.
+> For session-by-session changelog, see `SESSION_CONTEXT.md`.
 
 ## Overview
 
-This spec describes how to split the chatbox's chart, map, and markdown components into independent **client plugins** — npm-installable React microfrontends that tethysdash discovers at build time, renders without a backend Python plugin, and communicates with via the existing `variableInputValues` system.
-
-This builds on top of the existing `MICRO_FRONTENDS_SPEC.md` (panel extraction) but replaces the Zustand store approach with tethysdash's native variable input system for cross-plugin data flow.
+The chatbox is a React microfrontend (MFE) loaded into tethysdash via Module Federation. It provides an LLM chat interface that connects to Ollama models and MCP tool servers. Results (charts, maps, queries) are published to tethysdash dashboard panels via the `variableInputValues` context system.
 
 ---
 
@@ -702,44 +704,43 @@ Batch event payload:
 - Panels are sorted by the sender (e.g., chatbox sorts by priority: map > chart > query > markdown)
 - Single (non-batch) events still work for backward compat
 
-### Layout rules
+### Layout algorithm: slot-finding
 
-**Single panel (across separate prompts):**
-1. Scan existing rows bottom-to-top for horizontal space
-2. If `rightEdge + panelW <= 100` → slot in side-by-side at hint width
-3. If no row has space → start a new row at **full width** (`w:100`)
+For each new panel, the algorithm scans the grid top-to-bottom (y=0 upward), left-to-right (x=0 to COLS-w), checking each position against all occupied rectangles (existing items + previously placed new panels). The panel is placed in the first slot where it fits without overlapping anything. Panels always keep their hint widths — no full-width expansion.
 
-**Batch (multiple panels from one prompt):**
-1. Pack panels left-to-right into rows using each panel's `w` hint
-2. When `rowX + panel.w > 100`, wrap to a new row
-3. Panels alone on their row expand to full width (`w:100`)
-4. Column count derives naturally: `floor(100 / panelW)`
+```
+for each new panel (w, h):
+  for y = 0 to maxY + h:
+    for x = 0 to COLS - w:
+      if no overlap with any occupied rectangle at (x, y, w, h):
+        place panel here
+        add to occupied list
+        break
+```
 
 ### Examples
 
 ```
-w:50 panels → 2 per row
-┌────────────────┬─────────────────┐
-│  Panel (w:50)  │  Panel (w:50)   │
+Chatbox (w:100) + 2 panels (w:50) added sequentially:
+┌──────────────────────────────────┐
+│         Chatbox (w:100)          │ y:0
+├────────────────┬─────────────────┤
+│ Panel 1 (w:50) │ Panel 2 (w:50)  │ y:25
 └────────────────┴─────────────────┘
 
-w:33 panels → 3 per row
+3 panels (w:50) — third fills first available slot:
+┌──────────────────────────────────┐
+│         Chatbox (w:100)          │ y:0
+├────────────────┬─────────────────┤
+│ Panel 1 (w:50) │ Panel 2 (w:50)  │ y:25
+├────────────────┘                 │
+│ Panel 3 (w:50) │                 │ y:50
+└────────────────┘                 │
+
+Mixed widths — w:33 panels fit 3 per row:
 ┌──────────┬──────────┬───────────┐
 │  (w:33)  │  (w:33)  │  (w:33)   │
 └──────────┴──────────┴───────────┘
-
-Single panel, no space → full width
-┌──────────────────────────────────┐
-│       Panel (expanded w:100)     │
-└──────────────────────────────────┘
-
-Mixed: chatbox w:40, query w:50 fits next to it
-┌────────────┬─────────────────────┐
-│ Chatbox    │ QueryPanel (w:50)   │
-│ (w:40)     │ slotted in          │
-├────────────┴─────────────────────┤
-│ ChartPanel (w:100, full width)   │
-└──────────────────────────────────┘
 ```
 
 ---
@@ -768,8 +769,14 @@ Mixed: chatbox w:40, query w:50 fits next to it
 | CREATE | `src/panels/MapPanel.jsx` | Reads `variableInputValues.chatbox_map` (falls back to `chatbox_map` initial prop), renders FlowpathsPmtilesMap |
 | CREATE | `src/panels/MarkdownPanel.jsx` | Reads `variableInputValues.chatbox_markdown` (falls back to `chatbox_markdown` initial prop), renders MarkdownContent |
 | CREATE | `src/panels/QueryPanel.jsx` | Reads `variableInputValues.chatbox_query` (falls back to `chatbox_query` initial prop), renders scrollable HTML table |
-| MODIFY | `src/chatbox.jsx` | Accepts updateVariableInputValues/variableInputValues props; detects embedded mode; publishes variables; dispatches batch `tethysdash:add-visualization` event with `PANEL_HINTS` (w/h/priority); sorts panels by priority; derives MFE URL from `import.meta.url`; shows text indicators when embedded |
-| MODIFY | `src/lib/chatboxEngine.js` | Returns `queryResult: { data, sql }` for query/hydrofabric results |
+| CREATE | `src/panels/panelStyles.js` | Shared panel styles: rounded corners, white bg, box-shadow, overflow hidden, 100% w/h |
+| MODIFY | `src/chatbox.jsx` | Persistent conversation via `engineMessagesRef`; context usage indicator; text-only responses stay in chat; no MarkdownPanel for text-only; dispatches batch event with `PANEL_HINTS` |
+| MODIFY | `src/lib/chatboxEngine.js` | Accepts `history` + `maxContextTokens`; persistent multi-turn; removed `lastListResult` early return; softened continuation prompt |
+| CREATE | `src/lib/chatboxConversation.js` | `estimateTokens()`, `trimConversation()`, `groupIntoTurns()` |
+| MODIFY | `src/lib/chatboxHelpers.js` | `extractContextLength()` from `/api/show`; `listOllamaModels()` returns `contextLength` |
+| MODIFY | `src/lib/chatboxMessages.js` | Conversation context instructions; discovery formatting rules 12-13 |
+| CREATE | `src/components/ContextUsageIndicator.jsx` | SVG ring progress with green/amber/red thresholds |
+| MODIFY | `src/components/markdownContent.jsx` | Removed SyntaxHighlighter default margin via `customStyle={{ margin: 0 }}` |
 | MODIFY | `src/App.css` | Changed `#root` to `.chatbox-standalone` to prevent CSS leaking into host page |
 | MODIFY | `index.html` | Added `class="chatbox-standalone"` to `#root` div for standalone mode |
 | MODIFY | `vite.config.js` | Exposes `./QueryPanel` via Module Federation |
@@ -778,9 +785,21 @@ Mixed: chatbox w:40, query w:50 fits next to it
 
 | Action | File | Description |
 |--------|------|-------------|
-| CREATE | `reactapp/components/dashboard/panelLayoutUtils.js` | Generic tiling layout utility. `computePanelLayout(panels, existingGridItems)` — row-packing with full-width expansion for lone panels |
+| CREATE | `reactapp/components/dashboard/panelLayoutUtils.js` | Generic slot-finding tiling layout utility. `computePanelLayout(panels, existingGridItems)` — scans grid for first available slot per panel, no full-width expansion |
 | MODIFY | `reactapp/components/dashboard/DashboardLayout.js` | Supports batch + single events; filters duplicates; calls `computePanelLayout()`; creates all items in one `updateTab()` call |
 | MODIFY | `reactapp/components/visualizations/utilities.js` | `client_custom_remote` branch forwards `args.initialData` as `vizData.props` |
+
+### MCP Server self-contained package (IMPLEMENTED)
+
+| Action | File | Description |
+|--------|------|-------------|
+| COPY | `nextgen_mcp/rest.py` | Duplicated from chatbox — 13 REST API functions, relative imports |
+| COPY | `nextgen_mcp/validators.py` | Duplicated from chatbox — pydantic validators, relative imports |
+| COPY | `nextgen_mcp/utils_rest.py` | Duplicated from chatbox — DuckDB/Plotly/S3 helpers, relative imports |
+| MODIFY | `nextgen_mcp/utils.py` | Changed imports from `nextgen_plugins.chatbox.*` to relative `.rest` / `.validators` |
+| CREATE | `nextgen_mcp/requirements.txt` | 15 third-party Python dependencies |
+| CREATE | `nextgen_mcp/README.md` | Setup, Claude Desktop config (SSE + stdio), Claude Code CLI, env vars, tools reference |
+| CREATE | `scripts/setup-mcp.sh` | One-command venv setup + run (`--setup`, `--run` flags) |
 
 ### Remaining work (NOT YET IMPLEMENTED)
 
@@ -845,6 +864,39 @@ Both approaches coexist. Build-time plugins appear in the picker under their dec
 - [ ] MFE URL is correctly derived from `import.meta.url`
 - [ ] Panels work on first mount (initial data via props) and on subsequent prompts (context updates)
 - [ ] QueryPanel displays table rows from MCP query results
+
+### MCP Server
+- [ ] `./scripts/setup-mcp.sh` creates venv, installs deps, and starts server on port 9000
+- [ ] `claude mcp add nrds --transport sse http://localhost:9000/sse` registers the server in Claude Code
+- [ ] MCP tools (list_available_models, query_output_file, etc.) are callable from Claude Code after restart
+- [ ] `nextgen_mcp/` is fully self-contained — no imports from `nextgen_plugins.chatbox`
+
+### Multi-turn conversation (Session 4)
+- [ ] "Retrieve time series plot for flow..." followed by "Make it a table" reuses previous params
+- [ ] "Change the model to lstm" reuses all other params from previous query
+- [ ] Context usage indicator shows increasing usage as conversation grows
+- [ ] Switching models preserves conversation history and updates total in indicator
+- [ ] Old turns are trimmed when approaching 80% of context window
+- [ ] `contextLength` is correctly extracted from `/api/show` for each model
+
+### Discovery tool chaining (Session 4)
+- [ ] "What models are available?" returns a formatted list in the chat bubble (not raw JSON)
+- [ ] "What dates are available for cfe_nom?" returns readable text in chat
+- [ ] Discovery results do NOT create MarkdownPanel or publish to `chatbox_markdown`
+- [ ] LLM can chain discovery tools silently (e.g., list models → list dates → list files → query)
+- [ ] "Response sent to panels" no longer appears for text-only responses when embedded
+
+### Sidebar + Styled Components + Multi-MCP (Session 5)
+- [ ] Sidebar opens/closes via header toggle button — grid reflows
+- [ ] Chatbox renders WITH styles consistently (no race condition)
+- [ ] Refresh 10 times — styles present every time
+- [ ] All message types render correctly in sidebar (text, chart indicator, map indicator, query indicator)
+- [ ] MCP Server panel: add a server, remove a server, toggle on/off
+- [ ] Servers persist in localStorage across page reloads
+- [ ] Multi-MCP: tools from multiple servers available to LLM
+- [ ] No default MCP server — user adds their own
+- [ ] Dead files deleted: ThinkingSwitch, ModelSelector, App.css
+- [ ] No debug console.log in production build
 
 ---
 
