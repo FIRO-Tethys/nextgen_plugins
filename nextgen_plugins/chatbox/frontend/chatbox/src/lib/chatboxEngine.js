@@ -119,18 +119,32 @@ async function closeMcpConnection(connection) {
   }
 }
 
-async function loadTools(mcpClient) {
-  try {
-    const response = await mcpClient.listTools();
-    const toolsList = Array.isArray(response?.tools) ? response.tools : [];
-    if (toolsList.length) {
-      const mappedTools = toolsList.map((tool) => {
+/**
+ * Connect to multiple MCP servers and aggregate their tools.
+ * Each tool is tagged with its server index for routing.
+ * Returns { connections, tools, toolServerMap }.
+ */
+async function connectMcpServers(mcpServers) {
+  const connections = [];
+  const tools = [];
+  const toolServerMap = new Map();
+
+  for (let i = 0; i < mcpServers.length; i++) {
+    const server = mcpServers[i];
+    try {
+      const conn = await createMcpConnection(server.url);
+      connections.push(conn);
+
+      const response = await conn.client.listTools();
+      const toolsList = Array.isArray(response?.tools) ? response.tools : [];
+
+      for (const tool of toolsList) {
         const parameters =
           tool?.inputSchema && typeof tool.inputSchema === "object"
             ? tool.inputSchema
             : { type: "object", properties: {}, additionalProperties: false };
 
-        return {
+        const mapped = {
           type: "function",
           function: {
             name: tool.name,
@@ -138,16 +152,34 @@ async function loadTools(mcpClient) {
             parameters,
           },
         };
-      });
-      console.log("Loaded tools from MCP server:", mappedTools);
-      return mappedTools;
+        tools.push(mapped);
+        toolServerMap.set(tool.name, i);
+      }
+
+    } catch (error) {
+      console.error(`Failed to connect to MCP server ${server.name || server.url}:`, error);
+      connections.push(null);
     }
-  } catch (error) {
-    console.error("Error loading tools from MCP server:", error);
+  }
+
+  return { connections, tools, toolServerMap };
+}
+
+async function closeAllMcpConnections(connections) {
+  for (const conn of connections) {
+    await closeMcpConnection(conn);
   }
 }
 
-async function executeTool(toolName, args, mcpClient) {
+async function executeTool(toolName, args, connections, toolServerMap) {
+  const serverIdx = toolServerMap.get(toolName);
+  const conn = serverIdx != null ? connections[serverIdx] : null;
+  const mcpClient = conn?.client;
+
+  if (!mcpClient) {
+    return { error: `No MCP server found for tool: ${toolName}` };
+  }
+
   try {
     const result = await mcpClient.callTool({
       name: toolName,
@@ -180,7 +212,6 @@ async function chatWithOptionalThinkingStream({
   ollamaClient,
   signal,
 }) {
-  console.log("Starting chat with Ollama. Thinking enabled:", thinkingEnabled, "Model:", model);
   const basePayload = {
     model,
     messages,
@@ -269,18 +300,10 @@ async function chatWithOptionalThinkingStream({
   }
   merged.message = mergedMessage;
 
-  console.log("Merged assistant message:", {
-    role: mergedMessage.role,
-    hasToolCalls: Array.isArray(mergedMessage.tool_calls) && mergedMessage.tool_calls.length > 0,
-    toolCalls: mergedMessage.tool_calls,
-    contentPreview: mergedMessage.content.slice(0, 300),
-    thinkingPreview: mergedMessage.thinking.slice(-800),
-  });
-
   return merged;
 }
 
-async function processToolCalls(toolCalls, messages, mcpClient, state, originalUserText) {
+async function processToolCalls(toolCalls, messages, connections, toolServerMap, state, originalUserText) {
   let hadError = false;
   let lastErr = null;
 
@@ -303,18 +326,14 @@ async function processToolCalls(toolCalls, messages, mcpClient, state, originalU
       const currentS3 = typeof args?.s3_url === "string" ? args.s3_url : "";
 
       if (!isPlausibleOutputsFile(currentS3)) {
-        console.log(`Tool ${toolName} called with s3_url that doesn't look like a valid outputs file:`, { currentS3 });
-
         const fallback =
           S3_URL_DEPENDENT_TOOLS.has(toolName)
             ? lastToolFileUrl(messages, [".parquet", ".nc", ".nc4"])
             : null;
 
         if (fallback) {
-          console.log(`Using fallback s3_url for tool ${toolName}:`, { fallback });
           args.s3_url = fallback;
         } else {
-          console.log(`No valid fallback s3_url found for tool ${toolName}. Returning error result.`);
           const toolResult = invalidOutputFileToolResult(toolName, args);
           const callSignature = toolCallSignature(toolName, args);
 
@@ -339,18 +358,7 @@ async function processToolCalls(toolCalls, messages, mcpClient, state, originalU
     const signatureArgs = args && typeof args === "object" ? args : { _raw: args };
     const callSignature = toolCallSignature(toolName, signatureArgs);
 
-    const toolResult = await executeTool(toolName, args, mcpClient);
-    console.log("Tool result type:", {
-      toolName,
-      type: typeof toolResult,
-      isArray: Array.isArray(toolResult),
-      keys: toolResult && typeof toolResult === "object" ? Object.keys(toolResult) : null,
-      preview:
-        typeof toolResult === "string"
-          ? toolResult.slice(0, 200)
-          : JSON.stringify(toolResult)?.slice(0, 200),
-    });
-
+    const toolResult = await executeTool(toolName, args, connections, toolServerMap);
     // Categorize the tool result and update state
     if (toolResult && typeof toolResult === "object" && !toolErrorText(toolResult)) {
       for (const category of Object.values(TOOL_CATEGORIES)) {
@@ -418,6 +426,7 @@ export async function runChatSession({
   ollamaHost = DEFAULT_OLLAMA_HOST,
   ollamaApiKey = DEFAULT_OLLAMA_API_KEY,
   mcpServerUrl = DEFAULT_MCP_SERVER_URL,
+  mcpServers,
   history,
   maxContextTokens,
 }) {
@@ -447,14 +456,14 @@ export async function runChatSession({
 
   const text = typeof prompt === "string" ? prompt : "";
 
-  const mcpConnection = await createMcpConnection(mcpServerUrl);
-  const mcpClient = mcpConnection.client;
-  const tools = await loadTools(mcpClient);
+  // Normalize MCP servers: support both single URL and array of servers
+  const servers = Array.isArray(mcpServers) && mcpServers.length > 0
+    ? mcpServers
+    : mcpServerUrl
+      ? [{ url: mcpServerUrl, name: "Default" }]
+      : [];
 
-  console.log(
-    "Tool names sent to Ollama:",
-    (tools ?? []).map((t) => t?.function?.name)
-  );
+  const { connections, tools, toolServerMap } = await connectMcpServers(servers);
 
   try {
     messages.push({ role: "user", content: text });
@@ -477,14 +486,6 @@ export async function runChatSession({
         return { assistantText: "", messages, aborted: true };
       }
 
-      console.log("About to call Ollama with messages summary:", messages.slice(-4).map((m) => ({
-        role: m.role,
-        tool_name: m.tool_name,
-        contentPreview:
-          typeof m.content === "string" ? m.content.slice(0, 300) : JSON.stringify(m.content)?.slice(0, 300),
-      })));
-      console.log("Total messages:", messages.length);
-
       const response = await chatWithOptionalThinkingStream({
         messages,
         tools,
@@ -496,7 +497,6 @@ export async function runChatSession({
         signal,
       });
 
-      console.log("Received response from Ollama:", response);
       const message = getMessage(response);
       let toolCalls = Array.isArray(message.tool_calls) ? message.tool_calls : [];
 
@@ -509,14 +509,6 @@ export async function runChatSession({
         const assistantText = stripThinkTags(
           typeof message.content === "string" ? message.content : ""
         );
-        const thinkingText = typeof message.thinking === "string" ? message.thinking : "";
-
-        console.log("No tool calls found. Returning final assistant text.", {
-          assistantTextPreview: assistantText.slice(0, 300),
-          thinkingPreview: thinkingText.slice(-1000),
-          extractedInlineCalls: extractInlineToolCalls(assistantText),
-        });
-
         messages.push({ role: "assistant", content: assistantText });
         return {
           assistantText,
@@ -533,7 +525,7 @@ export async function runChatSession({
         tool_calls: toolCalls,
       });
 
-      let { hadError, lastErr, failedSignatures } = await processToolCalls(toolCalls, messages, mcpClient, state, text);
+      let { hadError, lastErr, failedSignatures } = await processToolCalls(toolCalls, messages, connections, toolServerMap, state, text);
 
       const earlyResult = !hadError && checkEarlyReturn(state, messages);
       if (earlyResult) return earlyResult;
@@ -559,7 +551,6 @@ export async function runChatSession({
         }
 
         for (let attempt = 1; attempt <= MAX_TOOL_REPAIR_ATTEMPTS; attempt += 1) {
-          console.log(`Attempting tool call repair ${attempt}/${MAX_TOOL_REPAIR_ATTEMPTS}`);
           messages.push(generateAutoFixToolMsg(lastErr, text, repeatedSignature));
 
           let repairResponse;
@@ -594,7 +585,7 @@ export async function runChatSession({
             content: stripThinkTags(typeof repairMessage.content === "string" ? repairMessage.content : ""),
             tool_calls: repairCalls,
           });
-          ({ hadError, lastErr, failedSignatures } = await processToolCalls(repairCalls, messages, mcpClient, state, text));
+          ({ hadError, lastErr, failedSignatures } = await processToolCalls(repairCalls, messages, connections, toolServerMap, state, text));
           repeatedSignature = bumpFailedSignatureCounts(failedSigCounts, failedSignatures);
 
           const repairEarlyResult = !hadError && checkEarlyReturn(state, messages);
@@ -616,6 +607,6 @@ export async function runChatSession({
       }
     }
   } finally {
-    await closeMcpConnection(mcpConnection);
+    await closeAllMcpConnections(connections);
   }
 }

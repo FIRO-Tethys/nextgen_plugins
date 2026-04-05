@@ -1,19 +1,48 @@
 // chatbox.jsx
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import styled, { ThemeProvider } from "styled-components";
+import chatTheme from "./components/chatTheme";
 import { runChatSession } from "./lib/chatboxEngine";
 import { listOllamaModels } from "./lib/chatboxHelpers";
 import { estimateTokens } from "./lib/chatboxConversation";
-import MarkdownContent from "./components/markdownContent";
-import PlotlyChart from "./components/PlotlyChart";
-import FlowpathsPmtilesMap from "./components/FlowpathsPmtilesMap";
-import ContextUsageIndicator from "./components/ContextUsageIndicator";
 import { CONTEXT_BUDGET_RATIO } from "./lib/chatboxConfig";
 import { publishResultToVariables, requestPanelCreation } from "./lib/chatboxPanelBridge";
-import "./chatbox.css";
+import { getMcpServers, addMcpServer, removeMcpServer, toggleMcpServer } from "./lib/chatboxMcpStorage";
+import ChatLog from "./components/ChatLog";
+import ChatInputBar from "./components/ChatInputBar";
+import ChatErrorPanel from "./components/ChatErrorPanel";
+import MCPServerPanel from "./components/MCPServerPanel";
 
 const REQUIRED_MODEL_CAPABILITIES = ["tools"];
 
-function ChatBox({ thinkingEnabled = false, model = "qwen3", modelOptions = [model], prompt = "", ollamaHost, mcpServerUrl, updateVariableInputValues, variableInputValues }) {
+const Shell = styled.div`
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  height: 100%;
+  padding: 0.75rem;
+  box-sizing: border-box;
+  overflow: hidden;
+  justify-content: ${(props) => (props.$hasMessages ? "flex-start" : "flex-end")};
+  align-items: ${(props) => (props.$hasMessages ? "stretch" : "center")};
+`;
+
+const WelcomeInputWrapper = styled.div`
+  width: 100%;
+  max-width: 700px;
+`;
+
+function ChatBox({
+  thinkingEnabled = false,
+  model = "qwen3",
+  modelOptions = [model],
+  prompt = "",
+  ollamaHost,
+  mcpServerUrl,
+  mcpServers,
+  updateVariableInputValues,
+  variableInputValues,
+}) {
   const isEmbedded = typeof updateVariableInputValues === "function";
   const [messages, setMessages] = useState([]);
   const [input, setInput] = useState(prompt);
@@ -25,103 +54,97 @@ function ChatBox({ thinkingEnabled = false, model = "qwen3", modelOptions = [mod
   const [loadingModels, setLoadingModels] = useState(false);
   const [discoveredModels, setDiscoveredModels] = useState([]);
   const [error, setError] = useState("");
+  const [showMcpPanel, setShowMcpPanel] = useState(false);
+  const [userMcpServers, setUserMcpServers] = useState(() => getMcpServers());
   const engineMessagesRef = useRef([]);
   const [contextUsage, setContextUsage] = useState({ used: 0, total: 0 });
   const configuredModels = useMemo(
     () => (Array.isArray(modelOptions) && modelOptions.length ? modelOptions : [model]),
-    [modelOptions, model]
+    [modelOptions, model],
   );
-  const availableModels = useMemo(
-    () => {
-      const seen = new Set();
-      return discoveredModels.filter((m) => {
-        if (!m?.name || seen.has(m.name)) return false;
-        seen.add(m.name);
-        return true;
-      });
-    },
-    [discoveredModels]
-  );
+  const availableModels = useMemo(() => {
+    const seen = new Set();
+    return discoveredModels.filter((m) => {
+      if (!m?.name || seen.has(m.name)) return false;
+      seen.add(m.name);
+      return true;
+    });
+  }, [discoveredModels]);
+  // Merge prop-provided MCP servers with user-configured servers from localStorage
+  const defaultMcpServers = useMemo(() => {
+    if (Array.isArray(mcpServers) && mcpServers.length > 0) return mcpServers;
+    if (mcpServerUrl) return [{ url: mcpServerUrl, name: "Default" }];
+    return [];
+  }, [mcpServers, mcpServerUrl]);
+
+  const allMcpServers = useMemo(() => {
+    const defaults = defaultMcpServers.map((s) => ({ ...s, isDefault: true, enabled: true }));
+    const userEnabled = userMcpServers.filter((s) => s.enabled !== false);
+    return [...defaults, ...userEnabled];
+  }, [defaultMcpServers, userMcpServers]);
+
+  const handleAddMcpServer = useCallback((server) => {
+    setUserMcpServers(addMcpServer(server));
+  }, []);
+
+  const handleRemoveMcpServer = useCallback((url) => {
+    setUserMcpServers(removeMcpServer(url));
+  }, []);
+
+  const handleToggleMcpServer = useCallback((url) => {
+    setUserMcpServers(toggleMcpServer(url));
+  }, []);
+
   const chatLogRef = useRef(null);
   const abortRef = useRef(null);
 
-  const stopGeneration = () => {
+  const stopGeneration = useCallback(() => {
     abortRef.current?.abort();
-  };
+  }, []);
 
+  // Auto-scroll chat log
   useEffect(() => {
     const el = chatLogRef.current;
     if (el) el.scrollTop = el.scrollHeight;
   }, [messages, thinkingBuffer, contentBuffer]);
 
-  useEffect(() => {
-    setInput(prompt ?? "");
-  }, [prompt]);
+  // Sync props to state
+  useEffect(() => { setInput(prompt ?? ""); }, [prompt]);
+  useEffect(() => { setSelectedModel(model); }, [model]);
+  useEffect(() => { setIsThinkingEnabled(Boolean(thinkingEnabled)); }, [thinkingEnabled]);
+  useEffect(() => { if (!isThinkingEnabled) setThinkingBuffer(""); }, [isThinkingEnabled]);
 
-  useEffect(() => {
-    setSelectedModel(model);
-  }, [model]);
-
-  useEffect(() => {
-    setIsThinkingEnabled(Boolean(thinkingEnabled));
-  }, [thinkingEnabled]);
-
-  useEffect(() => {
-    if (!isThinkingEnabled) {
-      setThinkingBuffer("");
-    }
-  }, [isThinkingEnabled]);
-
+  // Load models from Ollama API
   useEffect(() => {
     let cancelled = false;
     setLoadingModels(true);
-
-    // When embedded, use the ollamaHost prop (points to the Vite preview
-    // server which proxies /api to Ollama, avoiding CORS).
     listOllamaModels(isEmbedded ? ollamaHost : undefined, {
       extraModels: configuredModels,
       requiredCapabilities: REQUIRED_MODEL_CAPABILITIES,
     })
-      .then((models) => {
-        if (!cancelled) {
-          setDiscoveredModels(models);
-        }
-      })
-      .catch((err) => {
-        console.warn("Unable to load Ollama model list:", err);
-      })
-      .finally(() => {
-        if (!cancelled) {
-          setLoadingModels(false);
-        }
-      });
-
-    return () => {
-      cancelled = true;
-    };
+      .then((models) => { if (!cancelled) setDiscoveredModels(models); })
+      .catch((err) => { console.warn("Unable to load Ollama model list:", err); })
+      .finally(() => { if (!cancelled) setLoadingModels(false); });
+    return () => { cancelled = true; };
   }, [configuredModels, isEmbedded, ollamaHost]);
 
+  // Auto-select first model if current is unavailable
   useEffect(() => {
-    if (!availableModels.length) {
-      return;
-    }
+    if (!availableModels.length) return;
     if (!selectedModel || !availableModels.some((m) => m.name === selectedModel)) {
       setSelectedModel(availableModels[0].name);
     }
   }, [availableModels, selectedModel]);
 
-  // Update context total when model changes; preserve conversation history
+  // Update context total when model changes
   useEffect(() => {
     const modelInfo = discoveredModels.find((m) => m.name === selectedModel);
-    const total = modelInfo?.contextLength ?? 8192;
-    setContextUsage((prev) => ({ ...prev, total }));
+    setContextUsage((prev) => ({ ...prev, total: modelInfo?.contextLength ?? 8192 }));
   }, [selectedModel, discoveredModels]);
 
-  const sendMessage = async () => {
+  const sendMessage = useCallback(async () => {
     const userText = input.trim();
-    if (!userText || loading) {
-      return;
-    }
+    if (!userText || loading) return;
 
     setError("");
     setThinkingBuffer("");
@@ -144,11 +167,9 @@ function ChatBox({ thinkingEnabled = false, model = "qwen3", modelOptions = [mod
         history: engineMessagesRef.current,
         maxContextTokens: Math.floor(contextUsage.total * CONTEXT_BUDGET_RATIO),
         ...(ollamaHost ? { ollamaHost } : {}),
-        ...(mcpServerUrl ? { mcpServerUrl } : {}),
+        mcpServers: allMcpServers,
         onThinkingChunk: (chunk) => {
-          if (!isThinkingEnabled || !chunk) {
-            return;
-          }
+          if (!isThinkingEnabled || !chunk) return;
           accumulatedThinking += chunk;
           setThinkingBuffer(accumulatedThinking);
         },
@@ -156,27 +177,21 @@ function ChatBox({ thinkingEnabled = false, model = "qwen3", modelOptions = [mod
           if (!chunk) return;
           accumulatedContent += chunk;
           setContentBuffer(accumulatedContent);
-          // Stream content to external panels in real-time
           if (isEmbedded) {
             updateVariableInputValues({ chatbox_markdown: accumulatedContent });
           }
         },
       });
 
-      // Persist conversation for next turn and update token usage
       if (result.messages) {
         engineMessagesRef.current = result.messages;
-        setContextUsage((prev) => ({
-          ...prev,
-          used: estimateTokens(result.messages),
-        }));
+        setContextUsage((prev) => ({ ...prev, used: estimateTokens(result.messages) }));
       }
 
       const content = result.aborted
         ? (accumulatedContent || "(Stopped)")
         : (result.assistantText || "");
 
-      // Publish results to tethysdash panels
       if (isEmbedded) {
         publishResultToVariables(result, updateVariableInputValues);
         requestPanelCreation(result);
@@ -201,186 +216,73 @@ function ChatBox({ thinkingEnabled = false, model = "qwen3", modelOptions = [mod
       abortRef.current = null;
       setLoading(false);
     }
-  };
+  }, [input, loading, selectedModel, isThinkingEnabled, contextUsage.total, ollamaHost, mcpServerUrl, isEmbedded, updateVariableInputValues]);
 
   const hasMessages = messages.length > 0 || loading;
 
   const inputBar = (
-    <section className="chat-input-bar">
-      <textarea
-        value={input}
-        onChange={(event) => {
-          setInput(event.target.value);
-          const el = event.target;
-          el.style.height = "auto";
-          el.style.height = `${el.scrollHeight}px`;
-        }}
-        placeholder={`Message ${selectedModel || "assistant"}...`}
-        onKeyDown={(event) => {
-          if (event.key === "Enter" && !event.shiftKey) {
-            event.preventDefault();
-            void sendMessage();
-          }
-        }}
-        rows={1}
-      />
-      <div className="chat-input-toolbar">
-        <div className="chat-input-toggles">
-          <button
-            type="button"
-            className={`chat-pill-btn ${isThinkingEnabled ? "pill-active" : ""}`}
-            onClick={() => setIsThinkingEnabled((v) => !v)}
-            disabled={loading}
-          >
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-              <path d="M12 2a7 7 0 0 1 7 7c0 2.4-1.2 4.5-3 5.7V17a2 2 0 0 1-2 2h-4a2 2 0 0 1-2-2v-2.3C6.2 13.5 5 11.4 5 9a7 7 0 0 1 7-7z"/>
-              <line x1="10" y1="22" x2="14" y2="22"/>
-            </svg>
-            Thinking
-          </button>
-          <select
-            className="chat-model-select"
-            value={selectedModel}
-            onChange={(event) => setSelectedModel(event.target.value)}
-            disabled={loading || loadingModels || !availableModels.length}
-          >
-            {availableModels.length ? (
-              availableModels.map((m) => (
-                <option key={m.name} value={m.name}>
-                  {m.capabilities.includes("thinking") ? "\uD83D\uDCA1 " : ""}{m.name}
-                </option>
-              ))
-            ) : (
-              <option value="">{loadingModels ? "Loading..." : "No models"}</option>
-            )}
-          </select>
-          <ContextUsageIndicator used={contextUsage.used} total={contextUsage.total} />
-        </div>
-        {loading ? (
-          <button
-            type="button"
-            className="chat-send-btn chat-stop-btn"
-            onClick={stopGeneration}
-            aria-label="Stop generation"
-          >
-            <svg width="14" height="14" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
-              <rect x="4" y="4" width="16" height="16" rx="2" fill="#ffffff" />
-            </svg>
-          </button>
-        ) : (
-          <button
-            type="button"
-            className="chat-send-btn"
-            onClick={() => void sendMessage()}
-            disabled={!input.trim()}
-            aria-label="Send message"
-          >
-            <svg width="18" height="18" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
-              <path d="M12 3L4 11h5v8h6v-8h5L12 3z" fill="#ffffff" />
-            </svg>
-          </button>
-        )}
-      </div>
-    </section>
+    <ChatInputBar
+      input={input}
+      setInput={setInput}
+      onSend={sendMessage}
+      onStop={stopGeneration}
+      loading={loading}
+      loadingModels={loadingModels}
+      selectedModel={selectedModel}
+      onModelChange={setSelectedModel}
+      availableModels={availableModels}
+      isThinkingEnabled={isThinkingEnabled}
+      onThinkingToggle={() => setIsThinkingEnabled((v) => !v)}
+      contextUsage={contextUsage}
+      onOpenMcpPanel={() => setShowMcpPanel(true)}
+      mcpServerCount={allMcpServers.length}
+    />
   );
+
+  if (showMcpPanel) {
+    return (
+      <ThemeProvider theme={chatTheme}>
+        <Shell $hasMessages>
+          <MCPServerPanel
+            defaultServers={defaultMcpServers}
+            userServers={userMcpServers}
+            onAdd={handleAddMcpServer}
+            onRemove={handleRemoveMcpServer}
+            onToggle={handleToggleMcpServer}
+            onClose={() => setShowMcpPanel(false)}
+          />
+        </Shell>
+      </ThemeProvider>
+    );
+  }
 
   if (!hasMessages) {
     return (
-      <div className="chat-shell chat-shell-welcome">
-        <div className="chat-welcome">
-        </div>
-        {inputBar}
-      </div>
+      <ThemeProvider theme={chatTheme}>
+        <Shell $hasMessages={false}>
+          <div />
+          <WelcomeInputWrapper>{inputBar}</WelcomeInputWrapper>
+        </Shell>
+      </ThemeProvider>
     );
   }
 
   return (
-    <div className="chat-shell chat-shell-conversation">
-      <section className="chat-log" ref={chatLogRef}>
-        {messages.map((message, index) => {
-          const isUser = message.role === "user";
-          return (
-            <div key={`${message.role}-${index}`} className={`chat-row ${isUser ? "chat-row-user" : "chat-row-assistant"}`}>
-              <div className={`chat-avatar ${isUser ? "avatar-user" : "avatar-bot"}`}>
-                {isUser ? (
-                  <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><path d="M12 12c2.7 0 5-2.3 5-5s-2.3-5-5-5-5 2.3-5 5 2.3 5 5 5zm0 2c-3.3 0-10 1.7-10 5v2h20v-2c0-3.3-6.7-5-10-5z"/></svg>
-                ) : (
-                  <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><path d="M20 9V7c0-1.1-.9-2-2-2h-3c0-1.7-1.3-3-3-3S9 3.3 9 5H6c-1.1 0-2 .9-2 2v2c-1.7 0-3 1.3-3 3s1.3 3 3 3v4c0 1.1.9 2 2 2h12c1.1 0 2-.9 2-2v-4c1.7 0 3-1.3 3-3s-1.3-3-3-3zM9 14c-.8 0-1.5-.7-1.5-1.5S8.2 11 9 11s1.5.7 1.5 1.5S9.8 14 9 14zm6 0c-.8 0-1.5-.7-1.5-1.5s.7-1.5 1.5-1.5 1.5.7 1.5 1.5S15.8 14 15 14z"/></svg>
-                )}
-              </div>
-              <article className={`chat-bubble ${isUser ? "chat-user" : "chat-assistant"}`}>
-                {!isUser && message.thinking && (
-                  <details className="thinking-dropdown">
-                    <summary>Thinking</summary>
-                    <pre>{message.thinking}</pre>
-                  </details>
-                )}
-                {isUser ? (
-                  message.content && <MarkdownContent content={message.content} />
-                ) : message.mapConfig ? (
-                  isEmbedded ? (
-                    <p className="chat-panel-indicator">Map updated in Map panel</p>
-                  ) : (
-                    <div className="chat-map-wrapper">
-                      <FlowpathsPmtilesMap mapConfig={message.mapConfig} />
-                    </div>
-                  )
-                ) : message.plotlyFigure ? (
-                  isEmbedded ? (
-                    <p className="chat-panel-indicator">Chart updated in Chart panel</p>
-                  ) : (
-                    <div className="chat-plot-wrapper">
-                      <PlotlyChart figure={message.plotlyFigure} />
-                    </div>
-                  )
-                ) : message.queryResult ? (
-                  isEmbedded ? (
-                    <p className="chat-panel-indicator">Query results sent to Query panel</p>
-                  ) : (
-                    <MarkdownContent content={message.content || JSON.stringify(message.queryResult.data, null, 2)} />
-                  )
-                ) : message.content ? (
-                  <MarkdownContent content={message.content} />
-                ) : null}
-              </article>
-            </div>
-          );
-        })}
-
-        {loading && (
-          <div className="chat-row chat-row-assistant">
-            <div className="chat-avatar avatar-bot">
-              <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><path d="M20 9V7c0-1.1-.9-2-2-2h-3c0-1.7-1.3-3-3-3S9 3.3 9 5H6c-1.1 0-2 .9-2 2v2c-1.7 0-3 1.3-3 3s1.3 3 3 3v4c0 1.1.9 2 2 2h12c1.1 0 2-.9 2-2v-4c1.7 0 3-1.3 3-3s-1.3-3-3-3zM9 14c-.8 0-1.5-.7-1.5-1.5S8.2 11 9 11s1.5.7 1.5 1.5S9.8 14 9 14zm6 0c-.8 0-1.5-.7-1.5-1.5s.7-1.5 1.5-1.5 1.5.7 1.5 1.5S15.8 14 15 14z"/></svg>
-            </div>
-            <article className="chat-bubble chat-assistant">
-              {isThinkingEnabled && thinkingBuffer && (
-                <details className="thinking-dropdown" open={!contentBuffer}>
-                  <summary>Thinking...</summary>
-                  <pre>{thinkingBuffer}</pre>
-                </details>
-              )}
-              {isEmbedded ? (
-                <p className="chat-status">
-                  {contentBuffer ? "Streaming to panels..." : thinkingBuffer ? "" : "Running..."}
-                </p>
-              ) : contentBuffer ? (
-                <MarkdownContent content={contentBuffer} />
-              ) : (
-                !thinkingBuffer && <p className="chat-status">Running...</p>
-              )}
-            </article>
-          </div>
-        )}
-      </section>
-
-      {error && (
-        <section className="error-panel">
-          <strong>Error:</strong> {error}
-        </section>
-      )}
-
-      {inputBar}
-    </div>
+    <ThemeProvider theme={chatTheme}>
+      <Shell $hasMessages>
+        <ChatLog
+          ref={chatLogRef}
+          messages={messages}
+          isEmbedded={isEmbedded}
+          loading={loading}
+          isThinkingEnabled={isThinkingEnabled}
+          thinkingBuffer={thinkingBuffer}
+          contentBuffer={contentBuffer}
+        />
+        <ChatErrorPanel error={error} />
+        {inputBar}
+      </Shell>
+    </ThemeProvider>
   );
 }
 

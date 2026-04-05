@@ -621,62 +621,6 @@ export function toolErrorText(toolResult) {
   return null;
 }
 
-export function compactToolResultForContext(toolResult, maxItems = 50) {
-  if (toolResult && typeof toolResult === "object" && !Array.isArray(toolResult)) {
-    const compact = { ...toolResult };
-
-    if (toolErrorText(compact)) {
-      return compact;
-    }
-
-    for (const key of ["data", "files", "models", "dates", "forecasts", "cycles", "vpus"]) {
-      const value = compact[key];
-      if (Array.isArray(value) && value.length > maxItems) {
-        compact[key] = value.slice(0, maxItems);
-        compact[`${key}_truncated`] = true;
-        compact[`${key}_total`] = value.length;
-        if (typeof compact.count === "number") {
-          compact.count = compact[key].length;
-        }
-      }
-    }
-
-    const selectedPath = getFirstPath(compact);
-    if (selectedPath) {
-      compact.selected_path = selectedPath;
-      if (!compact.selected) {
-        compact.selected = { path: selectedPath };
-      }
-    }
-
-    if (Array.isArray(compact.files)) {
-      compact.files_total = compact.files.length;
-    }
-
-    if (typeof compact.total_count !== "number" && typeof compact.count === "number") {
-      compact.total_count = compact.count;
-    }
-
-    return compact;
-  }
-
-  if (Array.isArray(toolResult) && toolResult.length > maxItems) {
-    const items = toolResult.slice(0, maxItems);
-    const compactList = {
-      items,
-      items_truncated: true,
-      items_total: toolResult.length,
-    };
-    if (items.length && items[0] && typeof items[0] === "object" && typeof items[0].path === "string") {
-      compactList.selected_path = items[0].path;
-      compactList.selected = { path: items[0].path };
-    }
-    return compactList;
-  }
-
-  return toolResult;
-}
-
 function normalizeOllamaModelName(entry) {
   if (typeof entry === "string" && entry.trim()) {
     return entry.trim();
@@ -784,7 +728,6 @@ export async function listOllamaModels(ollamaHost = DEFAULT_OLLAMA_HOST, options
         });
 
         if (showResponse.ok) {
-          console.log(`Fetched capabilities for model ${modelName} from /api/show.`);
           const showPayload = await showResponse.json();
           const showCaps = Array.isArray(showPayload?.capabilities)
             ? showPayload.capabilities.map((c) => String(c ?? "").trim().toLowerCase()).filter(Boolean)
@@ -795,7 +738,6 @@ export async function listOllamaModels(ollamaHost = DEFAULT_OLLAMA_HOST, options
           contextLength = extractContextLength(showPayload);
         }
       } catch {
-        console.log(`Could not fetch capabilities for model ${modelName} from /api/show, falling back to /api/tags if available.`);
         // /api/show unavailable (e.g. Ollama Cloud) — use /api/tags capabilities.
       }
 

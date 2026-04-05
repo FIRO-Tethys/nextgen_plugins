@@ -54,7 +54,6 @@ import { panelStyle, panelEmptyStyle } from "./panelStyles";
 
 export default function QueryPanel({ variableInputValues, chatbox_query: initialQuery }) {
   const queryData = variableInputValues?.chatbox_query || initialQuery;
-  console.log("QueryPanel received data:", queryData);
 
   if (!queryData) {
     return (

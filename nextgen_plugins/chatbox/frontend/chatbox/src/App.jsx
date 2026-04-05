@@ -1,5 +1,4 @@
 import ChatBox from "./chatbox";
-import "./App.css";
 
 function App() {
   const fallbackModels = String(import.meta.env.VITE_CHATBOX_MODELS ?? "qwen3")
