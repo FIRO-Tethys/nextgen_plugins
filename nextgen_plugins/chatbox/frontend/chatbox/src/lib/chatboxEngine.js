@@ -526,7 +526,13 @@ export async function runChatSession({
         });
 
         messages.push({ role: "assistant", content: assistantText });
-        return { assistantText, messages };
+        return {
+          assistantText,
+          queryResult: state.lastQueryResult
+            ? { data: state.lastQueryResult, sql: state.lastQuerySQL }
+            : undefined,
+          messages,
+        };
       }
 
       messages.push({
@@ -546,13 +552,8 @@ export async function runChatSession({
         };
       }
 
-      if (!hadError && state.lastQueryResult) {
-        return {
-          assistantText: JSON.stringify(state.lastQueryResult),
-          queryResult: { data: state.lastQueryResult, sql: state.lastQuerySQL },
-          messages,
-        };
-      }
+      // No early return for lastQueryResult — let the LLM chain multiple
+      // queries (e.g., comparisons across features) or produce a readable summary.
 
       // No early return for lastListResult — let the LLM chain discovery
       // tools or produce a human-readable text response.
