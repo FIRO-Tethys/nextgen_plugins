@@ -7,12 +7,11 @@ import MarkdownContent from "./components/markdownContent";
 import PlotlyChart from "./components/PlotlyChart";
 import FlowpathsPmtilesMap from "./components/FlowpathsPmtilesMap";
 import ContextUsageIndicator from "./components/ContextUsageIndicator";
+import { CONTEXT_BUDGET_RATIO } from "./lib/chatboxConfig";
+import { publishResultToVariables, requestPanelCreation } from "./lib/chatboxPanelBridge";
 import "./chatbox.css";
 
-const OLLAMA_API_KEY = (import.meta.env.VITE_OLLAMA_API_KEY ?? "").trim();
-const CONFIGURED_HOST = (import.meta.env.VITE_OLLAMA_HOST ?? "http://localhost:11434").replace(/\/+$/, "");
-const IS_CLOUD = Boolean(OLLAMA_API_KEY) && !/^https?:\/\/(localhost|127\.\d)/.test(CONFIGURED_HOST);
-const REQUIRED_MODEL_CAPABILITIES = IS_CLOUD ? ["tools"] : ["tools"];
+const REQUIRED_MODEL_CAPABILITIES = ["tools"];
 
 function ChatBox({ thinkingEnabled = false, model = "qwen3", modelOptions = [model], prompt = "", ollamaHost, mcpServerUrl, updateVariableInputValues, variableInputValues }) {
   const isEmbedded = typeof updateVariableInputValues === "function";
@@ -137,14 +136,13 @@ function ChatBox({ thinkingEnabled = false, model = "qwen3", modelOptions = [mod
     abortRef.current = controller;
 
     try {
-      console.log(selectedModel)
       const result = await runChatSession({
         prompt: userText,
         model: selectedModel,
         thinkingEnabled: isThinkingEnabled,
         signal: controller.signal,
         history: engineMessagesRef.current,
-        maxContextTokens: Math.floor(contextUsage.total * 0.8),
+        maxContextTokens: Math.floor(contextUsage.total * CONTEXT_BUDGET_RATIO),
         ...(ollamaHost ? { ollamaHost } : {}),
         ...(mcpServerUrl ? { mcpServerUrl } : {}),
         onThinkingChunk: (chunk) => {
@@ -165,8 +163,6 @@ function ChatBox({ thinkingEnabled = false, model = "qwen3", modelOptions = [mod
         },
       });
 
-      console.log("Chat session completed with result:", result);
-
       // Persist conversation for next turn and update token usage
       if (result.messages) {
         engineMessagesRef.current = result.messages;
@@ -180,79 +176,10 @@ function ChatBox({ thinkingEnabled = false, model = "qwen3", modelOptions = [mod
         ? (accumulatedContent || "(Stopped)")
         : (result.assistantText || "");
 
-      // Publish results to tethysdash panels via variableInputValues
+      // Publish results to tethysdash panels
       if (isEmbedded) {
-        const updates = {};
-        if (result.plotlyFigure) updates.chatbox_chart = result.plotlyFigure;
-        if (result.mapConfig) updates.chatbox_map = result.mapConfig;
-        if (result.queryResult) updates.chatbox_query = result.queryResult;
-        // Only publish text to markdown panel when it accompanies a data result.
-        // Text-only responses (discovery, explanations) stay in the chat bubble.
-        if (result.assistantText && (result.plotlyFigure || result.mapConfig || result.queryResult)) {
-          updates.chatbox_markdown = result.assistantText;
-        }
-        if (Object.keys(updates).length > 0) {
-          updateVariableInputValues(updates);
-        }
-
-        // Request dynamic panel creation (Option C)
-        // Panels are created only if they don't already exist on the dashboard.
-        // Initial data is passed via args so it's available at mount time
-        // before the variableInputValues context propagates.
-        // Size hints (w, h) and priority are sent so the dashboard layout
-        // utility can arrange panels without knowing chatbox-specific types.
-        const PANEL_HINTS = {
-          "./MapPanel":      { w: 50, h: 35, priority: 0 },
-          "./ChartPanel":    { w: 50, h: 30, priority: 1 },
-          "./QueryPanel":    { w: 50, h: 25, priority: 2 },
-          "./MarkdownPanel": { w: 50, h: 20, priority: 3 },
-        };
-
-        const mfeUrl =
-          window.__CHATBOX_MFE_URL__ ||
-          new URL("remoteEntry.js", import.meta.url).href;
-        const mfeArgs = {
-          url: mfeUrl,
-          scope: "mfe_nrds_chatbox",
-          remoteType: "vite-esm",
-        };
-
-        const panelsToCreate = [];
-        if (result.plotlyFigure) {
-          panelsToCreate.push({ module: "./ChartPanel", initialData: { chatbox_chart: result.plotlyFigure } });
-        }
-        if (result.mapConfig) {
-          panelsToCreate.push({ module: "./MapPanel", initialData: { chatbox_map: result.mapConfig } });
-        }
-        if (result.queryResult) {
-          panelsToCreate.push({ module: "./QueryPanel", initialData: { chatbox_query: result.queryResult } });
-        }
-        // Text-only responses (discovery, explanations) stay in the chat —
-        // no MarkdownPanel created for them.
-
-        if (panelsToCreate.length > 0) {
-          // Sort by priority so visual panels (map, chart) get prominent positions
-          panelsToCreate.sort(
-            (a, b) => (PANEL_HINTS[a.module]?.priority ?? 99) - (PANEL_HINTS[b.module]?.priority ?? 99),
-          );
-
-          window.dispatchEvent(
-            new CustomEvent("tethysdash:add-visualization", {
-              detail: {
-                source: "Client Custom",
-                batch: true,
-                panels: panelsToCreate.map((p) => {
-                  const hints = PANEL_HINTS[p.module] || {};
-                  return {
-                    args: { ...mfeArgs, module: p.module, initialData: p.initialData },
-                    w: hints.w,
-                    h: hints.h,
-                  };
-                }),
-              },
-            }),
-          );
-        }
+        publishResultToVariables(result, updateVariableInputValues);
+        requestPanelCreation(result);
       }
 
       setMessages((prev) => [
@@ -269,7 +196,6 @@ function ChatBox({ thinkingEnabled = false, model = "qwen3", modelOptions = [mod
       setThinkingBuffer("");
       setContentBuffer("");
     } catch (err) {
-      console.log("Chat session error:", err);
       setError(String(err?.message ?? err));
     } finally {
       abortRef.current = null;
@@ -395,7 +321,7 @@ function ChatBox({ thinkingEnabled = false, model = "qwen3", modelOptions = [mod
                   isEmbedded ? (
                     <p className="chat-panel-indicator">Map updated in Map panel</p>
                   ) : (
-                    <div className="chat-map-wrapper" style={{ width: "100%", minHeight: "500px", marginTop: "12px" }}>
+                    <div className="chat-map-wrapper">
                       <FlowpathsPmtilesMap mapConfig={message.mapConfig} />
                     </div>
                   )
@@ -403,7 +329,7 @@ function ChatBox({ thinkingEnabled = false, model = "qwen3", modelOptions = [mod
                   isEmbedded ? (
                     <p className="chat-panel-indicator">Chart updated in Chart panel</p>
                   ) : (
-                    <div className="chat-plot-wrapper" style={{ width: "100%", minHeight: "360px", marginTop: "12px" }}>
+                    <div className="chat-plot-wrapper">
                       <PlotlyChart figure={message.plotlyFigure} />
                     </div>
                   )

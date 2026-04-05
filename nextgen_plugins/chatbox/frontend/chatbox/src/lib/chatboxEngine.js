@@ -24,49 +24,50 @@ import {
 } from "./chatboxHelpers";
 import { trimConversation } from "./chatboxConversation";
 import { buildSystemMessage } from "./chatboxMessages";
+import {
+  DEFAULT_OLLAMA_HOST,
+  DEFAULT_OLLAMA_API_KEY,
+  DEFAULT_MCP_SERVER_URL,
+  MAX_TOOL_REPAIR_ATTEMPTS,
+} from "./chatboxConfig";
 
-const CONFIGURED_OLLAMA_HOST = (import.meta.env.VITE_OLLAMA_HOST ?? "http://localhost:11434").replace(/\/+$/, "");
-const DEFAULT_OLLAMA_API_KEY = (import.meta.env.VITE_OLLAMA_API_KEY ?? "").trim();
-// In dev mode, use same-origin so requests go through the Vite proxy (avoids CORS with Ollama Cloud).
-// The Ollama browser SDK defaults to window.location.origin when host is empty.
-const DEFAULT_OLLAMA_HOST = import.meta.env.DEV ? "" : CONFIGURED_OLLAMA_HOST;
-const DEFAULT_MCP_SERVER_URL = (import.meta.env.VITE_MCP_SERVER_URL ?? "/sse").trim();
-console.log("Configured Ollama host:", CONFIGURED_OLLAMA_HOST);
-console.log("Effective Ollama host (empty = same-origin proxy):", DEFAULT_OLLAMA_HOST || "(same-origin)");
-console.log("Default MCP server URL:", DEFAULT_MCP_SERVER_URL);
-console.log("Ollama API key configured:", Boolean(DEFAULT_OLLAMA_API_KEY));
-const MAX_TOOL_REPAIR_ATTEMPTS = Number.parseInt(import.meta.env.VITE_MCP_TOOL_REPAIR_ATTEMPTS ?? "0", 10);
+// Tool categories — each maps tool names to a state key set on success.
+// Used by processToolCalls to update state and by early-return logic.
+const TOOL_CATEGORIES = {
+  chart: {
+    tools: new Set(["create_plotly_chart_from_parquet_output_file", "create_plotly_chart_from_output_selector"]),
+    stateKey: "lastChartResult",
+  },
+  query: {
+    tools: new Set(["query_output_file", "query_output_file_from_output_selector"]),
+    stateKey: "lastQueryResult",
+    onSuccess: (state, _result, args) => {
+      state.lastQuerySQL = typeof args?.query === "string" ? args.query : null;
+    },
+  },
+  list: {
+    tools: new Set([
+      "list_available_models", "list_available_dates", "list_available_forecasts",
+      "list_available_cycles", "list_available_vpus", "list_available_output_files",
+    ]),
+    stateKey: "lastListResult",
+  },
+  map: {
+    tools: new Set(["build_hydrofabric_feature_map_config"]),
+    stateKey: "lastMapResult",
+  },
+  hydrofabric: {
+    tools: new Set(["query_hydrofabric_parquet_file"]),
+    stateKey: "lastHydrofabricResult",
+  },
+};
 
+// Derived sets for specific logic (S3 URL rewriting, output file validation)
 const OUTPUT_FILE_QUERY_TOOLS = new Set([
   "query_output_file",
   "create_plotly_chart_from_parquet_output_file",
 ]);
-
-const QUERY_RESULT_TOOLS = new Set([
-  "query_output_file",
-  "query_output_file_from_output_selector",
-]);
-
-const HYDROFABRIC_QUERY_TOOL = "query_hydrofabric_parquet_file";
-
-const LIST_RESULT_TOOLS = new Set([
-  "list_available_models",
-  "list_available_dates",
-  "list_available_forecasts",
-  "list_available_cycles",
-  "list_available_vpus",
-  "list_available_output_files",
-]);
-
-const S3_URL_DEPENDENT_TOOLS = new Set([
-  "query_output_file",
-  "create_plotly_chart_from_parquet_output_file",
-]);
-
-const CHART_RESULT_TOOLS = new Set([
-  "create_plotly_chart_from_parquet_output_file",
-  "create_plotly_chart_from_output_selector",
-]);
+const S3_URL_DEPENDENT_TOOLS = OUTPUT_FILE_QUERY_TOOLS;
 
 function normalizeMcpSseUrl(serverUrl) {
   const raw = String(serverUrl ?? "").trim();
@@ -350,50 +351,15 @@ async function processToolCalls(toolCalls, messages, mcpClient, state, originalU
           : JSON.stringify(toolResult)?.slice(0, 200),
     });
 
-    if (
-      CHART_RESULT_TOOLS.has(toolName) &&
-      toolResult &&
-      typeof toolResult === "object" &&
-      !toolErrorText(toolResult)
-    ) {
-      state.lastChartResult = toolResult;
-    }
-
-    if (
-      QUERY_RESULT_TOOLS.has(toolName) &&
-      toolResult &&
-      typeof toolResult === "object" &&
-      !toolErrorText(toolResult)
-    ) {
-      state.lastQueryResult = toolResult;
-      state.lastQuerySQL = typeof args?.query === "string" ? args.query : null;
-    }
-
-    if (
-      LIST_RESULT_TOOLS.has(toolName) &&
-      toolResult &&
-      typeof toolResult === "object" &&
-      !toolErrorText(toolResult)
-    ) {
-      state.lastListResult = toolResult;
-    }
-
-    if (
-      toolName === "build_hydrofabric_feature_map_config" &&
-      toolResult &&
-      typeof toolResult === "object" &&
-      !toolErrorText(toolResult)
-    ) {
-      state.lastMapResult = toolResult;
-    }
-
-    if (
-      toolName === HYDROFABRIC_QUERY_TOOL &&
-      toolResult &&
-      typeof toolResult === "object" &&
-      !toolErrorText(toolResult)
-    ) {
-      state.lastHydrofabricResult = toolResult;
+    // Categorize the tool result and update state
+    if (toolResult && typeof toolResult === "object" && !toolErrorText(toolResult)) {
+      for (const category of Object.values(TOOL_CATEGORIES)) {
+        if (category.tools.has(toolName)) {
+          state[category.stateKey] = toolResult;
+          category.onSuccess?.(state, toolResult, args);
+          break;
+        }
+      }
     }
 
     messages.push({
@@ -414,6 +380,32 @@ async function processToolCalls(toolCalls, messages, mcpClient, state, originalU
   }
 
   return { hadError, lastErr, failedSignatures };
+}
+
+/**
+ * Check if a terminal result (chart, map, hydrofabric) should end the session.
+ * Query and list results are intentionally NOT terminal — the LLM may need
+ * to chain multiple queries or produce a readable summary.
+ */
+function checkEarlyReturn(state, messages) {
+  if (state.lastChartResult) {
+    return {
+      assistantText: "",
+      plotlyFigure: state.lastChartResult.figure ?? state.lastChartResult,
+      messages,
+    };
+  }
+  if (state.lastMapResult) {
+    return { assistantText: "", mapConfig: state.lastMapResult, messages };
+  }
+  if (state.lastHydrofabricResult) {
+    return {
+      assistantText: JSON.stringify(state.lastHydrofabricResult),
+      queryResult: { data: state.lastHydrofabricResult, sql: null },
+      messages,
+    };
+  }
+  return null;
 }
 
 export async function runChatSession({
@@ -543,36 +535,8 @@ export async function runChatSession({
 
       let { hadError, lastErr, failedSignatures } = await processToolCalls(toolCalls, messages, mcpClient, state, text);
 
-      if (!hadError && state.lastChartResult) {
-        console.log("Returning Plotly chart result from state:", state.lastChartResult);
-        return {
-          assistantText: "",
-          plotlyFigure: state.lastChartResult.figure ?? state.lastChartResult,
-          messages,
-        };
-      }
-
-      // No early return for lastQueryResult — let the LLM chain multiple
-      // queries (e.g., comparisons across features) or produce a readable summary.
-
-      // No early return for lastListResult — let the LLM chain discovery
-      // tools or produce a human-readable text response.
-
-      if (!hadError && state.lastMapResult) {
-        return {
-          assistantText: "",
-          mapConfig: state.lastMapResult,
-          messages,
-        };
-      }
-
-      if (!hadError && state.lastHydrofabricResult) {
-        return {
-          assistantText: JSON.stringify(state.lastHydrofabricResult),
-          queryResult: { data: state.lastHydrofabricResult, sql: null },
-          messages,
-        };
-      }
+      const earlyResult = !hadError && checkEarlyReturn(state, messages);
+      if (earlyResult) return earlyResult;
 
       if (!hadError) {
         messages.push({
@@ -633,50 +597,16 @@ export async function runChatSession({
           ({ hadError, lastErr, failedSignatures } = await processToolCalls(repairCalls, messages, mcpClient, state, text));
           repeatedSignature = bumpFailedSignatureCounts(failedSigCounts, failedSignatures);
 
-          if (!hadError && state.lastChartResult) {
-            return {
-              assistantText: "",
-              plotlyFigure: state.lastChartResult.figure ?? state.lastChartResult,
-              messages,
-            };
-          }
-
-          if (!hadError && state.lastQueryResult) {
-            return {
-              assistantText: JSON.stringify(state.lastQueryResult),
-              messages,
-            };
-          }
-
-          if (!hadError && state.lastListResult) {
-            return {
-              assistantText: JSON.stringify(state.lastListResult),
-              messages,
-            };
-          }
-
-          if (!hadError && state.lastMapResult) {
-            return {
-              assistantText: "",
-              mapConfig: state.lastMapResult,
-              messages,
-            };
-          }
-
-          if (!hadError && state.lastHydrofabricResult) {
-            return {
-              assistantText: JSON.stringify(state.lastHydrofabricResult),
-              messages,
-            };
-          }
+          const repairEarlyResult = !hadError && checkEarlyReturn(state, messages);
+          if (repairEarlyResult) return repairEarlyResult;
 
           if (!hadError) {
             messages.push({
               role: "user",
               content:
-                `Continue solving the original request using the tool result above. ` +
-                `Do not ask for clarification if enough information already exists. ` +
-                `If the original request already implies a SQL query, derive it and call the next tool now. ` +
+                `Use the tool result above to continue. ` +
+                `If the user's request is fully answered, respond with a clear, readable summary — do not return raw JSON. ` +
+                `If more tool calls are needed to fulfill the request, make them now. ` +
                 `Original request: ${text}`,
             });
             break;

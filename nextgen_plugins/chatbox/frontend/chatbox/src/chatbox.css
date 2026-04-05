@@ -166,7 +166,16 @@
 .chat-map-wrapper,
 .chat-plot-wrapper {
   width: 100%;
+  margin-top: 12px;
   box-sizing: border-box;
+}
+
+.chat-map-wrapper {
+  min-height: 500px;
+}
+
+.chat-plot-wrapper {
+  min-height: 360px;
 }
 
 .thinking-dropdown summary {
