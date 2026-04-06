@@ -5,7 +5,7 @@ import chatTheme from "./components/chatTheme";
 import { runChatSession } from "./lib/chatboxEngine";
 import { listOllamaModels } from "./lib/chatboxHelpers";
 import { estimateTokens } from "./lib/chatboxConversation";
-import { CONTEXT_BUDGET_RATIO } from "./lib/chatboxConfig";
+import { CONTEXT_BUDGET_RATIO, ADD_VISUALIZATION_EVENT } from "./lib/chatboxConfig";
 import { publishResultToVariables, requestPanelCreation } from "./lib/chatboxPanelBridge";
 import { getMcpServers, addMcpServer, removeMcpServer, toggleMcpServer } from "./lib/chatboxMcpStorage";
 import ChatLog from "./components/ChatLog";
@@ -195,6 +195,23 @@ function ChatBox({
       if (isEmbedded) {
         publishResultToVariables(result, updateVariableInputValues);
         requestPanelCreation(result);
+
+        // Dispatch visualization specs from TethysDash MCP server
+        if (result.visualizations?.length > 0) {
+          for (const viz of result.visualizations) {
+            window.dispatchEvent(
+              new CustomEvent(ADD_VISUALIZATION_EVENT, {
+                detail: {
+                  source: viz.source,
+                  args: viz.inlineData
+                    ? { vizType: viz.vizType, inlineData: viz.inlineData }
+                    : viz.args,
+                  position: { w: viz.w, h: viz.h },
+                },
+              }),
+            );
+          }
+        }
       }
 
       setMessages((prev) => [

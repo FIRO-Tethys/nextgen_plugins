@@ -368,6 +368,11 @@ async function processToolCalls(toolCalls, messages, connections, toolServerMap,
           break;
         }
       }
+
+      // Collect visualization specs from TethysDash MCP server
+      if (toolResult.visualization) {
+        state.pendingVisualizations.push(toolResult.visualization);
+      }
     }
 
     messages.push({
@@ -437,6 +442,7 @@ export async function runChatSession({
     lastListResult: null,
     lastMapResult: null,
     lastHydrofabricResult: null,
+    pendingVisualizations: [],
   };
 
   // In dev mode, host is empty — use the current origin so SDK requests
@@ -514,6 +520,9 @@ export async function runChatSession({
           assistantText,
           queryResult: state.lastQueryResult
             ? { data: state.lastQueryResult, sql: state.lastQuerySQL }
+            : undefined,
+          visualizations: state.pendingVisualizations.length > 0
+            ? state.pendingVisualizations
             : undefined,
           messages,
         };
