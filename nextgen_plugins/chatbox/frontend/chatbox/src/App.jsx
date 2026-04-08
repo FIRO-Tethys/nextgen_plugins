@@ -1,5 +1,9 @@
 import ChatBox from "./chatbox";
 
+const ollamaHost = 'http://localhost:5173';
+const ollamaApiKey = import.meta.env.VITE_OLLAMA_API_KEY?.trim() || undefined;
+const mcpServerUrl = import.meta.env.VITE_MCP_SERVER_URL?.trim() || undefined;
+
 function App() {
   const fallbackModels = String(import.meta.env.VITE_CHATBOX_MODELS ?? "qwen3")
     .split(",")
@@ -13,6 +17,9 @@ function App() {
       model={defaultModel}
       modelOptions={fallbackModels}
       prompt=""
+      ollamaHost={ollamaHost}
+      ollamaApiKey={ollamaApiKey}
+      mcpServerUrl={mcpServerUrl}
     />
   );
 }

@@ -246,7 +246,7 @@ function parseModelCapabilities(entry) {
 }
 
 export async function listOllamaModels(ollamaHost = DEFAULT_OLLAMA_HOST, options = {}) {
-  const host = String(ollamaHost ?? DEFAULT_OLLAMA_HOST).replace(/\/+$/, "");
+  const host = String(ollamaHost ?? "").replace(/\/+$/, "");
   const apiKey = typeof options?.apiKey === "string" ? options.apiKey.trim() : DEFAULT_OLLAMA_API_KEY;
   const csrf = typeof options?.csrfToken === "string" ? options.csrfToken : "";
   const authHeaders = {

@@ -1,15 +1,27 @@
 import { defineConfig, loadEnv } from 'vite'
+import { resolve } from 'path'
 import react from '@vitejs/plugin-react'
 import federation from "@originjs/vite-plugin-federation";
+
+const coreRoot = resolve(__dirname, '../../../../packages/chatbox-core');
 
 // https://vite.dev/config/
 export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, process.cwd(), 'VITE_');
   const ollamaTarget = (env.VITE_OLLAMA_HOST || 'http://127.0.0.1:11434').replace(/\/+$/, '');
-
+  console.log(`Using Ollama host: ${ollamaTarget}`);
+  const ollamaApiKey = (env.VITE_OLLAMA_API_KEY || '').replace(/^['"]|['"]$/g, '');
+  console.log(`Using Ollama API key: ${ollamaApiKey}`);
   const ollamaProxy = {
     target: ollamaTarget,
     changeOrigin: true,
+    // Strip trailing slashes — Ollama Cloud returns 404 for /api/tags/ but
+    // 200 for /api/tags. Django proxy strips slashes before forwarding;
+    // Vite proxy must do the same.
+    rewrite: (path) => path.replace(/\/+$/, ''),
+    ...(ollamaApiKey && {
+      headers: { Authorization: `Bearer ${ollamaApiKey}` },
+    }),
   };
 
   return {
@@ -30,6 +42,22 @@ export default defineConfig(({ mode }) => {
     ],
     resolve: {
       dedupe: ["react", "react-dom", "styled-components"],
+      // In dev mode, resolve @chatbox/core to source files (not dist/)
+      // so edits are reflected immediately via Vite HMR.
+      // Production builds still use dist/ via the package.json exports map.
+      ...(mode !== 'production' && {
+        alias: {
+          "@chatbox/core/components": resolve(coreRoot, "components/index.js"),
+          "@chatbox/core/engine": resolve(coreRoot, "engine/index.js"),
+          "@chatbox/core/helpers": resolve(coreRoot, "helpers/index.js"),
+          "@chatbox/core/conversation": resolve(coreRoot, "conversation/index.js"),
+          "@chatbox/core/config": resolve(coreRoot, "config/index.js"),
+          "@chatbox/core/messages": resolve(coreRoot, "messages/index.js"),
+          "@chatbox/core/storage": resolve(coreRoot, "storage/mcpStorage.js"),
+          "@chatbox/core/theme": resolve(coreRoot, "theme/index.js"),
+          "@chatbox/core": resolve(coreRoot, "index.js"),
+        },
+      }),
     },
     build: {
       target: "esnext",

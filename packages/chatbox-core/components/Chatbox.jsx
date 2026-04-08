@@ -137,7 +137,7 @@ export default function Chatbox({
   useEffect(() => {
     let cancelled = false;
     setLoadingModels(true);
-    listOllamaModels(isEmbedded ? ollamaHost : undefined, {
+    listOllamaModels(ollamaHost, {
       apiKey: ollamaApiKey,
       csrfToken,
       extraModels: configuredModels,
@@ -147,7 +147,7 @@ export default function Chatbox({
       .catch((err) => { console.warn("Unable to load Ollama model list:", err); })
       .finally(() => { if (!cancelled) setLoadingModels(false); });
     return () => { cancelled = true; };
-  }, [configuredModels, isEmbedded, ollamaHost, ollamaApiKey, csrfToken]);
+  }, [configuredModels, ollamaHost, ollamaApiKey, csrfToken]);
 
   // Auto-select model
   useEffect(() => {

@@ -23,6 +23,11 @@ import {
 import { publishResultToVariables, requestPanelCreation } from "./lib/chatboxPanelBridge";
 import NrdsMessageContent from "./components/NrdsMessageContent";
 
+function getCsrfToken() {
+  const match = document.cookie.match(/csrftoken=([^;]+)/);
+  return match ? match[1] : "";
+}
+
 const NRDS_ENGINE_EXTENSIONS = {
   systemPromptBuilder: buildNrdsSystemMessage,
   toolCategories: NRDS_TOOL_CATEGORIES,
@@ -44,6 +49,7 @@ export default function ChatBox(props) {
   return (
     <Chatbox
       {...props}
+      csrfToken={props.csrfToken || getCsrfToken()}
       engineExtensions={NRDS_ENGINE_EXTENSIONS}
       onResult={handleResult}
       MessageRenderer={NrdsMessageContent}
