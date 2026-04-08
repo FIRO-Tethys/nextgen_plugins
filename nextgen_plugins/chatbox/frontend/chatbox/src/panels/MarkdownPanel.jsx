@@ -1,4 +1,4 @@
-import MarkdownContent from "../components/markdownContent";
+import { MarkdownContent } from "@chatbox/core/components";
 import { panelStyle, panelEmptyStyle } from "./panelStyles";
 
 export default function MarkdownPanel({ variableInputValues, chatbox_markdown: initialMarkdown }) {

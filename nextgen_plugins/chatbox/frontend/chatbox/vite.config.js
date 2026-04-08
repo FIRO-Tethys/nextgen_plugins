@@ -25,9 +25,12 @@ export default defineConfig(({ mode }) => {
           "./MarkdownPanel": "./src/panels/MarkdownPanel",
           "./QueryPanel": "./src/panels/QueryPanel",
         },
-        shared: ["react", "react-dom"],
+        shared: ["react", "react-dom", "styled-components"],
       }),
     ],
+    resolve: {
+      dedupe: ["react", "react-dom", "styled-components"],
+    },
     build: {
       target: "esnext",
     },

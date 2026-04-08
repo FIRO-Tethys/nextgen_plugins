@@ -1,6 +1,9 @@
-// chatboxHelpers.js
-import { AUTO_FIX_SYSTEM_MSG, FILE_MSG } from "./chatboxMessages";
-import { DEFAULT_OLLAMA_HOST, DEFAULT_OLLAMA_API_KEY } from "./chatboxConfig";
+// chatboxHelpers.js — NRDS-specific helpers.
+// Generic functions now also exist in @chatbox/core/helpers.
+// This file is kept for backward compat — NRDS-specific consumers import from here.
+import { NRDS_AUTO_FIX_MSG } from "./nrdsMessages";
+import { DEFAULT_OLLAMA_HOST, DEFAULT_OLLAMA_API_KEY } from "@chatbox/core/config";
+const AUTO_FIX_SYSTEM_MSG = NRDS_AUTO_FIX_MSG;
 const URL_RE = /(https?:\/\/\S+|s3:\/\/\S+)/i;
 const FROM_TARGET_RE = /\bfrom\s+([^\s;]+)/i;
 

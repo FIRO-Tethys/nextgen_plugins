@@ -1,7 +1,13 @@
+/**
+ * ChatMessage — Generic message bubble with avatar and content.
+ *
+ * Renders text only (via MarkdownContent). No domain-specific panel indicators.
+ * Visualization results come via the pendingVisualizations path (DOM events),
+ * not as message properties.
+ */
+
 import styled from "styled-components";
 import MarkdownContent from "./markdownContent";
-import PlotlyChart from "./PlotlyChart";
-import FlowpathsPmtilesMap from "./FlowpathsPmtilesMap";
 
 const ChatRow = styled.div`
   display: flex;
@@ -33,15 +39,9 @@ const Bubble = styled.article`
   max-width: ${(props) => (props.$isUser ? "80%" : "100%")};
   flex: ${(props) => (props.$isUser ? "unset" : "1")};
 
-  p {
-    margin: 0;
-    white-space: pre-wrap;
-  }
-
+  p { margin: 0; white-space: pre-wrap; }
   pre, code, .max-w-none, .max-w-none > div, .max-w-none span {
-    white-space: pre-wrap;
-    word-break: break-all;
-    overflow-wrap: break-word;
+    white-space: pre-wrap; word-break: break-all; overflow-wrap: break-word;
   }
 `;
 
@@ -60,10 +60,7 @@ const ThinkingDropdown = styled.details`
     font-weight: 600;
     color: ${({ theme }) => theme.colors.thinkingText};
     user-select: none;
-
-    &:hover {
-      color: ${({ theme }) => theme.colors.thinkingTextHover};
-    }
+    &:hover { color: ${({ theme }) => theme.colors.thinkingTextHover}; }
   }
 
   pre {
@@ -79,25 +76,6 @@ const ThinkingDropdown = styled.details`
   }
 `;
 
-const PanelIndicator = styled.p`
-  margin: 0;
-  color: ${({ theme }) => theme.colors.textStatus};
-`;
-
-const MapWrapper = styled.div`
-  width: 100%;
-  min-height: 500px;
-  margin-top: ${({ theme }) => theme.spacing.lg};
-  box-sizing: border-box;
-`;
-
-const PlotWrapper = styled.div`
-  width: 100%;
-  min-height: 360px;
-  margin-top: ${({ theme }) => theme.spacing.lg};
-  box-sizing: border-box;
-`;
-
 const UserIcon = () => (
   <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
     <path d="M12 12c2.7 0 5-2.3 5-5s-2.3-5-5-5-5 2.3-5 5 2.3 5 5 5zm0 2c-3.3 0-10 1.7-10 5v2h20v-2c0-3.3-6.7-5-10-5z" />
@@ -110,39 +88,7 @@ const BotIcon = () => (
   </svg>
 );
 
-function AssistantContent({ message, isEmbedded }) {
-  if (message.mapConfig) {
-    return isEmbedded ? (
-      <PanelIndicator>Map updated in Map panel</PanelIndicator>
-    ) : (
-      <MapWrapper>
-        <FlowpathsPmtilesMap mapConfig={message.mapConfig} />
-      </MapWrapper>
-    );
-  }
-  if (message.plotlyFigure) {
-    return isEmbedded ? (
-      <PanelIndicator>Chart updated in Chart panel</PanelIndicator>
-    ) : (
-      <PlotWrapper>
-        <PlotlyChart figure={message.plotlyFigure} />
-      </PlotWrapper>
-    );
-  }
-  if (message.queryResult) {
-    return isEmbedded ? (
-      <PanelIndicator>Query results sent to Query panel</PanelIndicator>
-    ) : (
-      <MarkdownContent content={message.content || JSON.stringify(message.queryResult.data, null, 2)} />
-    );
-  }
-  if (message.content) {
-    return <MarkdownContent content={message.content} />;
-  }
-  return null;
-}
-
-export default function ChatMessage({ message, isEmbedded }) {
+export default function ChatMessage({ message, isEmbedded, MessageRenderer }) {
   const isUser = message.role === "user";
 
   return (
@@ -159,8 +105,10 @@ export default function ChatMessage({ message, isEmbedded }) {
         )}
         {isUser ? (
           message.content && <MarkdownContent content={message.content} />
+        ) : MessageRenderer ? (
+          <MessageRenderer message={message} isEmbedded={isEmbedded} />
         ) : (
-          <AssistantContent message={message} isEmbedded={isEmbedded} />
+          message.content && <MarkdownContent content={message.content} />
         )}
       </Bubble>
     </ChatRow>

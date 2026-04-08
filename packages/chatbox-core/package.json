@@ -1,0 +1,40 @@
+{
+  "name": "@chatbox/core",
+  "version": "0.2.0",
+  "description": "Generic chatbox engine, UI components, and helpers. Self-contained build — consumers only need react + styled-components.",
+  "type": "module",
+  "main": "dist/index.js",
+  "module": "dist/index.js",
+  "exports": {
+    ".": "./dist/index.js",
+    "./engine": "./dist/engine/index.js",
+    "./conversation": "./dist/conversation/index.js",
+    "./helpers": "./dist/helpers/index.js",
+    "./config": "./dist/config/index.js",
+    "./messages": "./dist/messages/index.js",
+    "./storage": "./dist/storage/mcpStorage.js",
+    "./components": "./dist/components/index.js",
+    "./theme": "./dist/theme/index.js"
+  },
+  "scripts": {
+    "build": "vite build",
+    "dev": "vite build --watch"
+  },
+  "peerDependencies": {
+    "react": ">=17.0.0",
+    "react-dom": ">=17.0.0",
+    "styled-components": ">=5.0.0"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.27.0",
+    "ollama": "^0.6.0",
+    "react-markdown": "^9.0.0",
+    "react-syntax-highlighter": "^15.0.0",
+    "remark-gfm": "^4.0.0",
+    "remark-breaks": "^4.0.0"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-react": "^4.0.0",
+    "vite": "^6.0.0"
+  }
+}

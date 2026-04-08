@@ -11,6 +11,7 @@
     "serve": "npm run build && npm run preview"
   },
   "dependencies": {
+    "@chatbox/core": "file:../../../../packages/chatbox-core",
     "@modelcontextprotocol/sdk": "^1.27.1",
     "maplibre-gl": "^5.20.0",
     "ollama": "^0.6.3",

@@ -29,7 +29,7 @@ const LoadingRow = styled.div`
 `;
 
 const ChatLog = forwardRef(function ChatLog(
-  { messages, isEmbedded, loading, isThinkingEnabled, thinkingBuffer, contentBuffer },
+  { messages, isEmbedded, loading, isThinkingEnabled, thinkingBuffer, contentBuffer, MessageRenderer },
   ref,
 ) {
   return (
@@ -39,6 +39,7 @@ const ChatLog = forwardRef(function ChatLog(
           key={`${message.role}-${index}`}
           message={message}
           isEmbedded={isEmbedded}
+          MessageRenderer={MessageRenderer}
         />
       ))}
 
