@@ -1,0 +1,67 @@
+{
+  "name": "panels",
+  "version": "1.0.0",
+  "type": "module",
+  "main": "dist/panels.js",
+  "module": "dist/panels.js",
+  "exports": {
+    ".": "./dist/panels.js",
+    "./dist/*": "./dist/*"
+  },
+  "scripts": {
+    "build": "vite build",
+    "dev": "vite build --watch"
+  },
+  "peerDependencies": {
+    "react": "^18.0.0 || ^19.0.0",
+    "styled-components": "^6.0.0",
+    "@chatbox/core": "*"
+  },
+  "dependencies": {
+    "maplibre-gl": "^4.7.1",
+    "pmtiles": "^4.0.0",
+    "@turf/centroid": "^7.0.0",
+    "@turf/bbox": "^7.0.0",
+    "@turf/area": "^7.0.0",
+    "@turf/meta": "^7.0.0",
+    "@turf/helpers": "^7.0.0"
+  },
+  "devDependencies": {
+    "vite": "^7.3.1",
+    "@vitejs/plugin-react": "^4.0.0"
+  },
+  "tethysdash": {
+    "clientPlugins": [
+      {
+        "source": "Query Panel",
+        "label": "Query Panel",
+        "group": "Panels",
+        "type": "client_custom_remote",
+        "module": "./QueryPanel",
+        "tags": ["query", "table", "data"],
+        "description": "Displays tabular query results",
+        "args": {}
+      },
+      {
+        "source": "Markdown Panel",
+        "label": "Markdown Panel",
+        "group": "Panels",
+        "type": "client_custom_remote",
+        "module": "./MarkdownPanel",
+        "tags": ["markdown", "text", "results"],
+        "description": "Renders markdown/JSON content",
+        "args": {}
+      },
+      {
+        "source": "Map Panel",
+        "label": "Map Panel",
+        "group": "Panels",
+        "type": "client_custom_remote",
+        "module": "./MapPanel",
+        "tags": ["map", "maplibre", "pmtiles"],
+        "description": "PMTiles vector map with MapLibre GL",
+        "args": {}
+      }
+    ]
+  }
+}

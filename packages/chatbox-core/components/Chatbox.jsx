@@ -235,12 +235,17 @@ export default function Chatbox({
             args = { vizType: viz.vizType, inlineData: viz.inlineData };
           } else if (viz.vizType === "custom" && viz.scope) {
             // client_custom_remote: Module Federation coordinates
+            // Dual-format initialData: generic `data` prop + keyed for backward compat
+            const initialData = { data: viz.args || {} };
+            if (viz.dataKey) {
+              initialData[viz.dataKey] = viz.args || {};
+            }
             args = {
               url: viz.url,
               scope: viz.scope,
               module: viz.module,
               remoteType: viz.remoteType || "vite-esm",
-              initialData: viz.args || {},
+              initialData,
             };
           } else {
             args = viz.args;

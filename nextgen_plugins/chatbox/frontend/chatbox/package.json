@@ -12,6 +12,7 @@
   },
   "dependencies": {
     "@chatbox/core": "file:../../../../packages/chatbox-core",
+    "panels": "file:../../../../packages/panels",
     "@modelcontextprotocol/sdk": "^1.27.1",
     "maplibre-gl": "^5.20.0",
     "ollama": "^0.6.3",
