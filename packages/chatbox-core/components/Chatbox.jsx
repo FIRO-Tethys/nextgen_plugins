@@ -239,13 +239,18 @@ export default function Chatbox({
         }
       }
 
+      // Extract plotlyFigure from visualization specs for inline rendering
+      // (standalone) and text indicators (sidebar/MFE embedded modes)
+      const plotlyViz = result.visualizations?.find((v) => v.vizType === "plotly");
+      const inlinePlotly = plotlyViz?.inlineData ?? null;
+
       setMessages((prev) => [
         ...prev,
         {
           role: "assistant",
           content,
           thinking: accumulatedThinking || "",
-          plotlyFigure: result.plotlyFigure ?? null,
+          plotlyFigure: result.plotlyFigure ?? inlinePlotly,
           mapConfig: result.mapConfig ?? null,
           queryResult: result.queryResult ?? null,
         },

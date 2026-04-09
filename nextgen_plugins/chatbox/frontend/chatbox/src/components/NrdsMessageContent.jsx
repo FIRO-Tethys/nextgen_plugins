@@ -42,7 +42,7 @@ export default function NrdsMessageContent({ message, isEmbedded }) {
   }
   if (message.plotlyFigure) {
     return isEmbedded ? (
-      <PanelIndicator>Chart updated in Chart panel</PanelIndicator>
+      <PanelIndicator>Chart created on dashboard</PanelIndicator>
     ) : (
       <PlotWrapper>
         <PlotlyChart figure={message.plotlyFigure} />

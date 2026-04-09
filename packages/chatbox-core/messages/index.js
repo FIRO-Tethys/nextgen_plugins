@@ -31,7 +31,7 @@ export function getGenericSystemRules() {
     "5) Do not add explanations, summaries, introductions, or follow-up commentary unless the user explicitly asks for them.",
     "",
     "Output rules:",
-    "6) If the user asks for a chart, plot, graph, visualization, or line chart, the final answer MUST be the chart result from the chart tool.",
+    "6) If the user asks for a chart, plot, graph, or visualization, query the data first, then call create_plotly_chart to render it natively on the dashboard.",
     "7) If the user asks for a chart, DO NOT return raw rows, JSON rows, a list of values, or a text summary instead of a chart.",
     "8) If the user asks for raw data, return only the raw data.",
     "9) If the user asks for a single value, return only that value with a short label if needed.",

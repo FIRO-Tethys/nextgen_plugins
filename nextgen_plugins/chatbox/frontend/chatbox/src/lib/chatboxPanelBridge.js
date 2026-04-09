@@ -15,9 +15,8 @@ import {
 
 const PANEL_HINTS = {
   "./MapPanel": { w: 50, h: 35, priority: 0 },
-  "./ChartPanel": { w: 50, h: 30, priority: 1 },
-  "./QueryPanel": { w: 50, h: 25, priority: 2 },
-  "./MarkdownPanel": { w: 50, h: 20, priority: 3 },
+  "./QueryPanel": { w: 50, h: 25, priority: 1 },
+  "./MarkdownPanel": { w: 50, h: 20, priority: 2 },
 };
 
 /**
@@ -26,12 +25,11 @@ const PANEL_HINTS = {
  */
 export function publishResultToVariables(result, updateVariableInputValues) {
   const updates = {};
-  if (result.plotlyFigure) updates.chatbox_chart = result.plotlyFigure;
   if (result.mapConfig) updates.chatbox_map = result.mapConfig;
   if (result.queryResult) updates.chatbox_query = result.queryResult;
   if (
     result.assistantText &&
-    (result.plotlyFigure || result.mapConfig || result.queryResult)
+    (result.mapConfig || result.queryResult)
   ) {
     updates.chatbox_markdown = result.assistantText;
   }
@@ -57,12 +55,6 @@ export function requestPanelCreation(result) {
   };
 
   const panelsToCreate = [];
-  if (result.plotlyFigure) {
-    panelsToCreate.push({
-      module: "./ChartPanel",
-      initialData: { chatbox_chart: result.plotlyFigure },
-    });
-  }
   if (result.mapConfig) {
     panelsToCreate.push({
       module: "./MapPanel",

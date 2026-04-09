@@ -20,13 +20,6 @@ import {
 // ---------------------------------------------------------------------------
 
 export const NRDS_TOOL_CATEGORIES = {
-  chart: {
-    tools: new Set([
-      "create_plotly_chart_from_parquet_output_file",
-      "create_plotly_chart_from_output_selector",
-    ]),
-    stateKey: "lastChartResult",
-  },
   query: {
     tools: new Set([
       "query_output_file",
@@ -60,7 +53,6 @@ export const NRDS_TOOL_CATEGORIES = {
 
 const OUTPUT_FILE_QUERY_TOOLS = new Set([
   "query_output_file",
-  "create_plotly_chart_from_parquet_output_file",
 ]);
 
 const S3_URL_DEPENDENT_TOOLS = OUTPUT_FILE_QUERY_TOOLS;
@@ -70,13 +62,6 @@ const S3_URL_DEPENDENT_TOOLS = OUTPUT_FILE_QUERY_TOOLS;
 // ---------------------------------------------------------------------------
 
 export function checkNrdsEarlyReturn(state, messages) {
-  if (state.lastChartResult) {
-    return {
-      assistantText: "",
-      plotlyFigure: state.lastChartResult.figure ?? state.lastChartResult,
-      messages,
-    };
-  }
   if (state.lastMapResult) {
     return { assistantText: "", mapConfig: state.lastMapResult, messages };
   }
@@ -94,7 +79,25 @@ export function checkNrdsEarlyReturn(state, messages) {
 // Before tool execution (S3 URL validation + arg normalization)
 // ---------------------------------------------------------------------------
 
+const DEPRECATED_CHART_TOOLS = new Set([
+  "create_plotly_chart_from_parquet_output_file",
+  "create_plotly_chart_from_output_selector",
+]);
+
 export function beforeNrdsToolExecution(toolName, args, messages) {
+  // Redirect deprecated chart tools to the two-step query → create_plotly_chart flow
+  if (DEPRECATED_CHART_TOOLS.has(toolName)) {
+    return {
+      skip: true,
+      message: {
+        redirect:
+          "This tool is deprecated. Query data with query_output_file or " +
+          "query_output_file_from_output_selector, then call create_plotly_chart " +
+          "(TethysDash MCP) to render natively.",
+      },
+    };
+  }
+
   // Normalize NRDS-specific args (model literals, forecast, VPU, query rewriting)
   args = normalizeQueryToolArgs(toolName, args);
 
