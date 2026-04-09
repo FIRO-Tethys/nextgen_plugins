@@ -37,5 +37,57 @@
     "eslint-plugin-react-refresh": "^0.4.24",
     "globals": "^16.5.0",
     "vite": "^7.3.1"
+  },
+  "tethysdash": {
+    "clientPlugins": [
+      {
+        "source": "NRDS Map",
+        "label": "NRDS Hydrofabric Map",
+        "module": "./MapPanel",
+        "type": "client_custom_remote",
+        "scope": "mfe_nrds_chatbox",
+        "remoteType": "vite-esm",
+        "group": "NRDS",
+        "tags": ["map", "hydrofabric", "nrds", "pmtiles"],
+        "description": "MapLibre + PMTiles map for hydrofabric features",
+        "args": {}
+      },
+      {
+        "source": "NRDS Query",
+        "label": "NRDS Query Results",
+        "module": "./QueryPanel",
+        "type": "client_custom_remote",
+        "scope": "mfe_nrds_chatbox",
+        "remoteType": "vite-esm",
+        "group": "NRDS",
+        "tags": ["table", "query", "nrds", "data"],
+        "description": "Scrollable table for MCP query results",
+        "args": {}
+      },
+      {
+        "source": "NRDS Markdown",
+        "label": "NRDS Markdown",
+        "module": "./MarkdownPanel",
+        "type": "client_custom_remote",
+        "scope": "mfe_nrds_chatbox",
+        "remoteType": "vite-esm",
+        "group": "NRDS",
+        "tags": ["markdown", "text", "nrds"],
+        "description": "Markdown + code syntax highlighting",
+        "args": {}
+      },
+      {
+        "source": "NRDS Chart (Deprecated)",
+        "label": "NRDS Chart (Deprecated — use create_plotly_chart)",
+        "module": "./ChartPanel",
+        "type": "client_custom_remote",
+        "scope": "mfe_nrds_chatbox",
+        "remoteType": "vite-esm",
+        "group": "NRDS",
+        "tags": ["chart", "plotly", "nrds", "deprecated"],
+        "description": "DEPRECATED: Plotly chart via MFE. Use native create_plotly_chart instead.",
+        "args": {}
+      }
+    ]
   }
 }
