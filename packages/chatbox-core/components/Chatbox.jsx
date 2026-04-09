@@ -64,6 +64,7 @@ export default function Chatbox({
   updateVariableInputValues,
   engineExtensions = {},
   onResult,
+  resolveVisualizationUrl,
   MessageRenderer,
 }) {
   const isEmbedded = typeof updateVariableInputValues === "function";
@@ -225,13 +226,30 @@ export default function Chatbox({
       // Dispatch visualization specs from TethysDash MCP (generic path)
       if (result.visualizations?.length > 0) {
         for (const viz of result.visualizations) {
+          // Resolve MFE URL for client_custom_remote plugins
+          if (viz.vizType === "custom" && viz.scope && !viz.url && resolveVisualizationUrl) {
+            viz.url = resolveVisualizationUrl(viz);
+          }
+          let args;
+          if (viz.inlineData) {
+            args = { vizType: viz.vizType, inlineData: viz.inlineData };
+          } else if (viz.vizType === "custom" && viz.scope) {
+            // client_custom_remote: Module Federation coordinates
+            args = {
+              url: viz.url,
+              scope: viz.scope,
+              module: viz.module,
+              remoteType: viz.remoteType || "vite-esm",
+              initialData: viz.args || {},
+            };
+          } else {
+            args = viz.args;
+          }
           window.dispatchEvent(
             new CustomEvent(ADD_VISUALIZATION_EVENT, {
               detail: {
                 source: viz.source,
-                args: viz.inlineData
-                  ? { vizType: viz.vizType, inlineData: viz.inlineData }
-                  : viz.args,
+                args,
                 position: { w: viz.w, h: viz.h },
               },
             }),
@@ -263,7 +281,7 @@ export default function Chatbox({
       abortRef.current = null;
       setLoading(false);
     }
-  }, [input, loading, selectedModel, isThinkingEnabled, contextUsage.total, ollamaHost, ollamaApiKey, csrfToken, allMcpServers, isEmbedded, updateVariableInputValues, engineExtensions, onResult]);
+  }, [input, loading, selectedModel, isThinkingEnabled, contextUsage.total, ollamaHost, ollamaApiKey, csrfToken, allMcpServers, isEmbedded, updateVariableInputValues, engineExtensions, onResult, resolveVisualizationUrl]);
 
   const hasMessages = messages.length > 0 || loading;
 

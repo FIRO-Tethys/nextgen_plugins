@@ -45,6 +45,10 @@ function handleResult(result, { isEmbedded, updateVariableInputValues }) {
   }
 }
 
+function resolveMfeUrl() {
+  return window.__CHATBOX_MFE_URL__ || new URL("remoteEntry.js", import.meta.url).href;
+}
+
 export default function ChatBox(props) {
   return (
     <Chatbox
@@ -52,6 +56,7 @@ export default function ChatBox(props) {
       csrfToken={props.csrfToken || getCsrfToken()}
       engineExtensions={NRDS_ENGINE_EXTENSIONS}
       onResult={handleResult}
+      resolveVisualizationUrl={resolveMfeUrl}
       MessageRenderer={NrdsMessageContent}
     />
   );
