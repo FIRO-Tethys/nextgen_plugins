@@ -11,7 +11,7 @@ export default defineConfig({
       formats: ["es"],
     },
     rollupOptions: {
-      external: [/^react/, "styled-components", /^@chatbox\/core/],
+      external: [/^react/, "styled-components"],
     },
   },
 });

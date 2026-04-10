@@ -4,7 +4,7 @@
  * Renders markdown/JSON content. Accepts data directly via `data` prop
  * or reactively via `variableInputValues[dataKey]`.
  */
-import { MarkdownContent } from "@chatbox/core/components";
+import MarkdownContent from "./components/MarkdownContent.jsx";
 import { panelStyle, panelEmptyStyle } from "./panelStyles.js";
 
 export default function MarkdownPanel({
