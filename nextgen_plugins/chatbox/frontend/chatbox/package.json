@@ -12,7 +12,6 @@
   },
   "dependencies": {
     "@chatbox/core": "file:../../../../packages/chatbox-core",
-    "panels": "file:../../../../packages/panels",
     "@modelcontextprotocol/sdk": "^1.27.1",
     "maplibre-gl": "^5.20.0",
     "ollama": "^0.6.3",
@@ -51,7 +50,13 @@
         "group": "NRDS",
         "tags": ["map", "hydrofabric", "nrds", "pmtiles"],
         "description": "MapLibre + PMTiles map for hydrofabric features",
-        "args": {}
+        "args": {
+          "data": {
+            "type": "object",
+            "description": "Map configuration object with highlight (pmtiles_url, layer_key, id_property, value) and camera (center, zoom) properties",
+            "required": true
+          }
+        }
       },
       {
         "source": "NRDS Query",
@@ -63,7 +68,13 @@
         "group": "NRDS",
         "tags": ["table", "query", "nrds", "data"],
         "description": "Scrollable table for MCP query results",
-        "args": {}
+        "args": {
+          "data": {
+            "type": "array",
+            "description": "Array of row objects (e.g., [{col1: val1, col2: val2}]) or columnar object ({col1: [...], col2: [...]})",
+            "required": true
+          }
+        }
       },
       {
         "source": "NRDS Markdown",
@@ -75,7 +86,13 @@
         "group": "NRDS",
         "tags": ["markdown", "text", "nrds"],
         "description": "Markdown + code syntax highlighting",
-        "args": {}
+        "args": {
+          "data": {
+            "type": "string",
+            "description": "Markdown-formatted text content or JSON string to display",
+            "required": true
+          }
+        }
       },
       {
         "source": "NRDS Chart (Deprecated)",
