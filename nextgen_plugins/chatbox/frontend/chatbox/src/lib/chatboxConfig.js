@@ -4,8 +4,6 @@
 
 // Re-export generic constants from core
 export {
-  DEFAULT_OLLAMA_API_KEY,
-  DEFAULT_OLLAMA_HOST,
   DEFAULT_MCP_SERVER_URL,
   MAX_TOOL_REPAIR_ATTEMPTS,
   CONTEXT_BUDGET_RATIO,

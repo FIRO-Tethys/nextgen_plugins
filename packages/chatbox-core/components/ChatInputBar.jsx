@@ -166,6 +166,9 @@ export default function ChatInputBar({
   contextUsage,
   onOpenMcpPanel,
   mcpServerCount = 0,
+  showProviderPanel,
+  onToggleProviderPanel,
+  providerConfig,
 }) {
   const textareaRef = useRef(null);
 
@@ -228,6 +231,22 @@ export default function ChatInputBar({
             )}
           </ModelSelect>
           <ContextUsageIndicator used={contextUsage.used} total={contextUsage.total} />
+          <button
+            onClick={onToggleProviderPanel}
+            style={{
+              background: showProviderPanel ? "#dc3545" : "#6c757d",
+              color: "#fff",
+              border: "none",
+              borderRadius: "4px",
+              padding: "4px 8px",
+              cursor: "pointer",
+              fontSize: "0.75rem",
+            }}
+            title="LLM Provider Settings"
+          >
+            {providerConfig?.provider === "openai" ? "OpenAI" :
+             providerConfig?.provider === "anthropic" ? "Anthropic" : "Local"}
+          </button>
           {onOpenMcpPanel && (
             <McpButton
               type="button"

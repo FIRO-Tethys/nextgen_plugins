@@ -8,6 +8,7 @@ from fastmcp import FastMCP
 from datetime import datetime
 from starlette.middleware import Middleware
 from starlette.middleware.cors import CORSMiddleware
+from starlette.responses import Response
 from .utils import (
     _get_json_raw,
     _prefer_id_objects,
@@ -866,19 +867,54 @@ def create_plotly_chart_from_output_selector_tool(
         result)
     return result
 
+ALLOWED_ORIGINS = [
+    "http://localhost:8080",
+    "http://127.0.0.1:8080",
+    "http://localhost:8000",
+    "http://127.0.0.1:8000",
+]
+
+
+def _patch_sse_transport_for_cors():
+    """Monkey-patch SseServerTransport.handle_post_message to handle OPTIONS.
+
+    MCP SDK v1.26+ validates Content-Type on all requests routed to
+    handle_post_message, including CORS preflight OPTIONS (which have no
+    Content-Type). This patch intercepts OPTIONS and returns 200 with
+    CORS headers before the SDK's validation runs.
+    """
+    from mcp.server.sse import SseServerTransport
+
+    original_handle = SseServerTransport.handle_post_message
+
+    async def patched_handle(self, scope, receive, send):
+        if scope.get("method") == "OPTIONS":
+            origin = dict(scope.get("headers", [])).get(b"origin", b"").decode()
+            headers = {
+                "access-control-allow-origin": origin if origin in ALLOWED_ORIGINS else "*",
+                "access-control-allow-methods": "GET, POST, OPTIONS",
+                "access-control-allow-headers": "content-type, x-csrftoken, authorization",
+                "access-control-allow-credentials": "true",
+                "access-control-max-age": "86400",
+            }
+            response = Response(status_code=200, headers=headers)
+            await response(scope, receive, send)
+            return
+        await original_handle(self, scope, receive, send)
+
+    SseServerTransport.handle_post_message = patched_handle
+
+_patch_sse_transport_for_cors()
+
+
 CORS_MIDDLEWARE = [
     Middleware(
         CORSMiddleware,
-        allow_origins=[
-            "http://localhost:8080",
-            "http://127.0.0.1:8080",
-            "http://localhost:8000",
-            "http://127.0.0.1:8000",
-        ],
+        allow_origins=ALLOWED_ORIGINS,
         allow_credentials=True,
         allow_methods=["*"],
         allow_headers=["*"],
-    )
+    ),
 ]
 
 

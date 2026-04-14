@@ -28,8 +28,13 @@ const LoadingRow = styled.div`
   flex-direction: row;
 `;
 
+const ToolStatusText = styled(StatusText)`
+  margin-top: ${({ theme }) => theme.spacing.sm};
+  font-style: italic;
+`;
+
 const ChatLog = forwardRef(function ChatLog(
-  { messages, isEmbedded, loading, isThinkingEnabled, thinkingBuffer, contentBuffer, MessageRenderer },
+  { messages, isEmbedded, loading, isThinkingEnabled, thinkingBuffer, contentBuffer, toolStatus, MessageRenderer },
   ref,
 ) {
   return (
@@ -60,6 +65,7 @@ const ChatLog = forwardRef(function ChatLog(
             ) : (
               !thinkingBuffer && <StatusText>Running...</StatusText>
             )}
+            {toolStatus && <ToolStatusText>Calling tools...</ToolStatusText>}
           </Bubble>
         </LoadingRow>
       )}

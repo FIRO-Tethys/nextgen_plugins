@@ -14,7 +14,6 @@
     "@chatbox/core": "file:../../../../packages/chatbox-core",
     "@modelcontextprotocol/sdk": "^1.27.1",
     "maplibre-gl": "^5.20.0",
-    "ollama": "^0.6.3",
     "plotly.js-basic-dist-min": "^3.4.0",
     "pmtiles": "^4.4.0",
     "react": "18.2.0",

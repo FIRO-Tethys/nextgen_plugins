@@ -2,7 +2,10 @@
 // Generic functions now also exist in @chatbox/core/helpers.
 // This file is kept for backward compat — NRDS-specific consumers import from here.
 import { NRDS_AUTO_FIX_MSG } from "./nrdsMessages";
-import { DEFAULT_OLLAMA_HOST, DEFAULT_OLLAMA_API_KEY } from "@chatbox/core/config";
+// These were previously exported from @chatbox/core/config but removed in the
+// multi-provider refactor. Defined locally for backward compat with listOllamaModels.
+const DEFAULT_OLLAMA_HOST = "https://ollama.com";
+const DEFAULT_OLLAMA_API_KEY = "";
 const AUTO_FIX_SYSTEM_MSG = NRDS_AUTO_FIX_MSG;
 const URL_RE = /(https?:\/\/\S+|s3:\/\/\S+)/i;
 const FROM_TARGET_RE = /\bfrom\s+([^\s;]+)/i;

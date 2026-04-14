@@ -388,3 +388,82 @@ data (direct from MCP/LLM)
 - [ ] `remoteEntry.js` is accessible at the declared URL
 - [ ] Component handles missing data with an empty state
 - [ ] `args` declared with descriptions so the LLM knows what to send
+
+---
+
+## Mixed-Server MCP Flow
+
+When the chatbox connects to multiple MCP servers, the engine classifies each server and applies a tool budget to control how many tools are sent to the LLM per message.
+
+### Server Types
+
+The engine classifies each connected MCP server into one of two types:
+
+| Type | Detection | Behavior |
+|------|-----------|----------|
+| **search-facade** | Server exposes `search_tools` + `call_tool` tools AND has a small visible tool count | Only pinned (always-visible) tools are sent directly. Hidden tools are discoverable via `search_tools` and executable via `call_tool`. |
+| **full-catalog** | Everything else | All tools are sent directly to the LLM (subject to budget). |
+
+Classification uses a heuristic with a secondary check: the server must have both `search_tools` and `call_tool` in its tool names, AND the visible tool count must be below the small-catalog threshold. This prevents false positives from full-catalog servers that happen to have a tool named `call_tool`.
+
+### Tool Budget
+
+A global tool budget (default: **25 tools**) controls how many tools the LLM sees per message. Allocation follows a fixed-cost-first strategy:
+
+1. **Search-facade tools first** -- all visible tools from search-facade servers (fixed cost, typically small)
+2. **Small full-catalogs next** -- servers with <15 tools send all their tools
+3. **Large full-catalogs last** -- servers with >=15 tools use semantic matching to select the most relevant tools for the user's prompt, filling remaining budget
+
+The budget is **advisory**. If phases 1 and 2 alone exceed 25 tools, all tools are still sent with a console warning. Correctness takes priority over strict enforcement.
+
+Tool selection runs **once per user message** and remains stable across the entire chat loop (continuations, repairs). This prevents tool-set instability between turns.
+
+### Pinned Tools (tethysdash)
+
+The tethysdash MCP server uses FastMCP's BM25SearchTransform, making it a search-facade. It exposes 9 tools total: 7 pinned tools plus `search_tools` and `call_tool`.
+
+**Always-visible tools (7):**
+
+- `create_plotly_chart` -- Create interactive Plotly visualizations
+- `create_data_table` -- Create data tables
+- `create_variable_input` -- Create variable input controls
+- `render_plugin` -- Render a registered MFE plugin
+- `render_custom_visualization` -- Render a custom visualization
+- `list_available_visualizations` -- List all registered visualization plugins
+- `list_intake_plugins` -- List available Intake data catalog plugins
+
+Hidden tools (e.g., `create_map_visualization`) are discoverable by the LLM via `search_tools("map")` and callable via `call_tool("create_map_visualization", {...})`. FastMCP routes `call_tool` requests internally.
+
+### Adding a New MCP Server
+
+When you connect a new MCP server, the engine automatically classifies it:
+
+- **Has `search_tools` + `call_tool` with small visible set** -- classified as search-facade. Only visible tools count toward the budget.
+- **<15 tools** -- classified as small full-catalog. All tools sent directly, no semantic matching.
+- **>=15 tools** -- classified as large full-catalog. Semantic matching selects the most relevant tools per message using `@huggingface/transformers` (model: `Xenova/all-MiniLM-L6-v2`, ~23MB, loaded lazily on first large-catalog connection). If embeddings fail to load, all tools are sent as a fallback.
+
+### Test Server
+
+A configurable test MCP server is provided for development and testing of tool budget behavior.
+
+**Location:** `plugins/nextgen_plugins/test_mcp/test_large_catalog_server.py`
+
+**Usage:**
+
+```bash
+# Full-catalog mode: 50 tools on default port 9002
+python test_large_catalog_server.py --num-tools 50
+
+# Search-facade mode: 20 tools with BM25SearchTransform enabled
+python test_large_catalog_server.py --num-tools 20 --with-search
+
+# Custom port
+python test_large_catalog_server.py --num-tools 20 --port 9003
+```
+
+The server generates tools with realistic, semantically varied descriptions across domains (weather, search, data, files, users, etc.). Use it to verify:
+
+- Server classification (search-facade vs full-catalog)
+- Tool budget allocation with different server combinations
+- Semantic matching relevance for large catalogs
+- Budget overflow warnings when total tools exceed 25

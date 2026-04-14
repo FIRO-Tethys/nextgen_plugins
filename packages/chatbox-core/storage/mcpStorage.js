@@ -28,8 +28,11 @@ export function saveMcpServers(servers) {
 
 export function addMcpServer({ url, name }) {
   const servers = getMcpServers();
-  const normalized = url.trim().replace(/\/+$/, "");
+  let normalized = url.trim().replace(/\/+$/, "");
   if (!normalized) return servers;
+
+  // 0.0.0.0 is a server bind address, not a browser-reachable address.
+  normalized = normalized.replace(/\/\/0\.0\.0\.0([:/])/g, "//localhost$1");
 
   // Deduplicate by URL
   if (servers.some((s) => s.url.replace(/\/+$/, "") === normalized)) {

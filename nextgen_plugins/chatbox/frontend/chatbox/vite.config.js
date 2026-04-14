@@ -24,6 +24,29 @@ export default defineConfig(({ mode }) => {
     }),
   };
 
+  // Mirror the Django Ollama proxy path so chatbox-core's adapter works in dev.
+  // Target is VITE_OLLAMA_HOST (same as /api proxy). In production, the Django
+  // proxy reads x-ollama-host dynamically; in dev, the env var is the target.
+  const djangoOllamaProxy = {
+    target: ollamaTarget,
+    changeOrigin: true,
+    rewrite: (path) => path.replace(/^\/apps\/tethysdash\/ollama-proxy/, '').replace(/\/+$/, ''),
+    configure: (proxy) => {
+      proxy.on('proxyReq', (proxyReq, req) => {
+        // Forward API key from header or env var
+        const dynamicKey = req.headers['x-ollama-key'];
+        const key = dynamicKey || ollamaApiKey;
+        if (key) {
+          proxyReq.setHeader('Authorization', `Bearer ${key}`);
+        }
+        // Remove chatbox-core custom headers before forwarding to Ollama
+        proxyReq.removeHeader('x-ollama-host');
+        proxyReq.removeHeader('x-ollama-key');
+        proxyReq.removeHeader('x-csrftoken');
+      });
+    },
+  };
+
   return {
     plugins: [
       react(),
@@ -49,6 +72,7 @@ export default defineConfig(({ mode }) => {
         alias: {
           "@chatbox/core/components": resolve(coreRoot, "components/index.js"),
           "@chatbox/core/engine": resolve(coreRoot, "engine/index.js"),
+          "@chatbox/core/engine/embeddings": resolve(coreRoot, "engine/embeddings.js"),
           "@chatbox/core/helpers": resolve(coreRoot, "helpers/index.js"),
           "@chatbox/core/conversation": resolve(coreRoot, "conversation/index.js"),
           "@chatbox/core/config": resolve(coreRoot, "config/index.js"),
@@ -72,6 +96,7 @@ export default defineConfig(({ mode }) => {
           target: "http://127.0.0.1:9000",
           changeOrigin: true,
         },
+        "/apps/tethysdash/ollama-proxy/api": djangoOllamaProxy,
         "/api": ollamaProxy,
       },
     },
@@ -86,6 +111,7 @@ export default defineConfig(({ mode }) => {
           target: "http://127.0.0.1:9000",
           changeOrigin: true,
         },
+        "/apps/tethysdash/ollama-proxy/api": djangoOllamaProxy,
         "/api": ollamaProxy,
       },
     },

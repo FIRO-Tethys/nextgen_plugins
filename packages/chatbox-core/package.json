@@ -8,6 +8,7 @@
   "exports": {
     ".": "./dist/index.js",
     "./engine": "./dist/engine/index.js",
+    "./engine/embeddings": "./dist/engine/embeddings.js",
     "./conversation": "./dist/conversation/index.js",
     "./helpers": "./dist/helpers/index.js",
     "./config": "./dist/config/index.js",
@@ -25,13 +26,17 @@
     "react-dom": ">=17.0.0",
     "styled-components": ">=5.0.0"
   },
+  "optionalDependencies": {
+    "@huggingface/transformers": "^3.8.1"
+  },
   "dependencies": {
+    "@anthropic-ai/sdk": "^0.30.0",
     "@modelcontextprotocol/sdk": "^1.27.0",
-    "ollama": "^0.6.0",
+    "openai": "^4.0.0",
     "react-markdown": "^9.0.0",
     "react-syntax-highlighter": "^15.0.0",
-    "remark-gfm": "^4.0.0",
-    "remark-breaks": "^4.0.0"
+    "remark-breaks": "^4.0.0",
+    "remark-gfm": "^4.0.0"
   },
   "devDependencies": {
     "@vitejs/plugin-react": "^4.0.0",

@@ -1,18 +1,20 @@
 /**
  * engine.js — Generic chatbox engine with strategy pattern extension points.
  *
- * Handles MCP connection, Ollama streaming, tool execution, and conversation loop.
+ * Handles MCP connection, streaming, tool execution, and conversation loop.
+ * Classifies each MCP server as "search-facade" (BM25) or "full-catalog"
+ * and groups tools by server for per-server selection.
+ *
  * NO domain-specific logic — consumers inject behavior via extension points:
  *   - systemPromptBuilder: provides the system message
  *   - toolCategories: maps tool names to state keys
  *   - earlyReturnCheck: decides if a result should end the session
  *   - beforeToolExecution: preprocesses tool args (e.g., S3 URL validation)
- *   - continuationPrompt: custom "continue solving" message
  */
 
 import { Client as MCPClient } from "@modelcontextprotocol/sdk/client";
 import { SSEClientTransport } from "@modelcontextprotocol/sdk/client/sse";
-import { Ollama } from "ollama/browser";
+
 import {
   extractInlineToolCalls,
   getMessage,
@@ -24,11 +26,140 @@ import {
 import { trimConversation } from "../conversation/index.js";
 import { buildGenericSystemMessage } from "../messages/index.js";
 import {
-  DEFAULT_OLLAMA_HOST,
-  DEFAULT_OLLAMA_API_KEY,
   DEFAULT_MCP_SERVER_URL,
   MAX_TOOL_REPAIR_ATTEMPTS,
+  MAX_TOOL_RESULT_CHARS,
+  ALWAYS_ON_TOOLS,
 } from "../config/index.js";
+
+import { streamChat as openaiStreamChat } from "./adapters/openai.js";
+import { streamChat as anthropicStreamChat } from "./adapters/anthropic.js";
+import { streamChat as ollamaStreamChat } from "./adapters/ollama.js";
+
+const PROVIDER_ADAPTERS = {
+  openai: openaiStreamChat,
+  anthropic: anthropicStreamChat,
+  ollama: ollamaStreamChat,
+  custom: openaiStreamChat,
+};
+
+// ---------------------------------------------------------------------------
+// Server Classification
+// ---------------------------------------------------------------------------
+
+const SMALL_CATALOG_THRESHOLD = 8;
+
+/**
+ * Classify an MCP server as "search-facade" or "full-catalog" based on its
+ * exposed tool list. A search-facade server has BM25SearchTransform enabled
+ * and exposes search_tools + call_tool alongside a small set of pinned tools.
+ */
+function classifyServerTools(serverTools) {
+  const names = new Set(serverTools.map((t) => t.function.name));
+  const hasSearchFacade =
+    names.has("search_tools") &&
+    names.has("call_tool") &&
+    serverTools.length < SMALL_CATALOG_THRESHOLD;
+
+  return hasSearchFacade ? "search-facade" : "full-catalog";
+}
+
+// ---------------------------------------------------------------------------
+// Tool Budget & Per-Server Selection
+// ---------------------------------------------------------------------------
+
+const TOOL_BUDGET = 25;
+
+/**
+ * Select tools for the LLM based on per-server classification and a global budget.
+ *
+ * Called once per user message — the returned tool set remains stable across
+ * the entire chat loop (continuations, repairs).
+ *
+ * @param {string} prompt - Original user prompt (used for future semantic matching)
+ * @param {Object} toolsByServer - Map of serverId -> tool definitions
+ * @param {Object} classificationByServer - Map of serverId -> "search-facade"|"full-catalog"
+ * @param {Object} embeddingsByServer - Map of serverId -> embeddings (null until Unit 5)
+ * @returns {Array} Selected tools to send to the LLM
+ */
+async function selectToolsForPrompt(prompt, toolsByServer, classificationByServer, embeddingsByServer = {}) {
+  const selected = [];
+  let budgetRemaining = TOOL_BUDGET;
+  const largeCatalogServers = [];
+
+  // Phase 1: Fixed-cost servers (search-facade + small full-catalog)
+  for (const [serverId, serverTools] of Object.entries(toolsByServer)) {
+    const kind = classificationByServer[serverId] || "full-catalog";
+
+    if (kind === "search-facade") {
+      selected.push(...serverTools);
+      budgetRemaining -= serverTools.length;
+      continue;
+    }
+
+    // Full-catalog: small vs large
+    if (serverTools.length < SMALL_CATALOG_THRESHOLD) {
+      selected.push(...serverTools);
+      budgetRemaining -= serverTools.length;
+      continue;
+    }
+
+    largeCatalogServers.push({ serverId, serverTools });
+  }
+
+  // Phase 2: Large full-catalog servers share remaining budget
+  if (largeCatalogServers.length > 0 && budgetRemaining > 0) {
+    const perServer = Math.max(3, Math.floor(budgetRemaining / largeCatalogServers.length));
+
+    for (const { serverId, serverTools } of largeCatalogServers) {
+      const embeddings = embeddingsByServer[serverId];
+
+      if (embeddings) {
+        try {
+          const { selectTopTools } = await import("./embeddings.js");
+          const topTools = await selectTopTools(prompt, serverTools, embeddings, perServer);
+          selected.push(...topTools);
+          continue;
+        } catch { /* fall through to keyword matching */ }
+      }
+
+      // Keyword-based tool selection (fallback when no embeddings)
+      const alwaysOn = new Set(ALWAYS_ON_TOOLS);
+      const promptWords = new Set(
+        prompt.toLowerCase().split(/[\s,.:;!?()]+/).filter((w) => w.length > 2),
+      );
+
+      const scored = serverTools.map((tool) => {
+        const fn = tool.function || {};
+        const nameWords = (fn.name || "").toLowerCase().split("_");
+        const descWords = (fn.description || "").toLowerCase().split(/\s+/);
+        let score = 0;
+        for (const w of promptWords) {
+          if (nameWords.some((nw) => nw.includes(w) || w.includes(nw))) score += 3;
+          if (descWords.some((dw) => dw.includes(w) || w.includes(dw))) score += 1;
+        }
+        // Always-on tools get max score
+        if (alwaysOn.has(fn.name)) score = Infinity;
+        return { tool, score };
+      });
+
+      scored.sort((a, b) => b.score - a.score);
+
+      // Take top N per budget, but at least 5 tools as a safety net
+      const limit = Math.max(5, perServer);
+      const picked = scored.slice(0, limit).map((s) => s.tool);
+      selected.push(...picked);
+    }
+  } else if (largeCatalogServers.length > 0) {
+    // Budget exhausted by fixed-cost servers — send always-on tools only
+    const alwaysOn = new Set(ALWAYS_ON_TOOLS);
+    for (const { serverTools } of largeCatalogServers) {
+      selected.push(...serverTools.filter((t) => alwaysOn.has(t.function?.name)));
+    }
+  }
+
+  return selected;
+}
 
 // ---------------------------------------------------------------------------
 // MCP Connection Infrastructure
@@ -50,6 +181,10 @@ function normalizeMcpSseUrl(serverUrl) {
   } else {
     normalized = `http://${raw}`;
   }
+
+  // 0.0.0.0 is a server bind address, not a browser-reachable connect address.
+  // Auto-correct to localhost to prevent ERR_ADDRESS_INVALID.
+  normalized = normalized.replace(/\/\/0\.0\.0\.0([:/])/g, "//localhost$1");
 
   normalized = normalized.replace(/\/+$/, "");
   if (!normalized.endsWith("/sse")) {
@@ -75,9 +210,14 @@ export async function connectMcpServers(mcpServers) {
   const connections = [];
   const tools = [];
   const toolServerMap = new Map();
+  const toolsByServer = {};
+  const classificationByServer = {};
 
   for (let i = 0; i < mcpServers.length; i++) {
     const server = mcpServers[i];
+    const serverId = String(i);
+    toolsByServer[serverId] = [];
+
     try {
       const conn = await createMcpConnection(server.url);
       connections.push(conn);
@@ -91,19 +231,32 @@ export async function connectMcpServers(mcpServers) {
             ? tool.inputSchema
             : { type: "object", properties: {}, additionalProperties: false };
 
-        tools.push({
+        const toolDef = {
           type: "function",
           function: { name: tool.name, description: tool.description ?? "", parameters },
-        });
-        toolServerMap.set(tool.name, i);
+        };
+        tools.push(toolDef);
+        toolsByServer[serverId].push(toolDef);
+
+        if (toolServerMap.has(tool.name)) {
+          console.warn(
+            `Tool name collision: "${tool.name}" exists on server ${toolServerMap.get(tool.name)} and server ${i}. ` +
+            `Keeping first server's mapping. Consider using unique tool names across servers.`
+          );
+        } else {
+          toolServerMap.set(tool.name, i);
+        }
       }
+
+      classificationByServer[serverId] = classifyServerTools(toolsByServer[serverId]);
     } catch (error) {
       console.error(`Failed to connect to MCP server ${server.name || server.url}:`, error);
       connections.push(null);
+      classificationByServer[serverId] = "full-catalog";
     }
   }
 
-  return { connections, tools, toolServerMap };
+  return { connections, tools, toolServerMap, toolsByServer, classificationByServer };
 }
 
 async function closeAllMcpConnections(connections) {
@@ -142,64 +295,26 @@ export async function executeTool(toolName, args, connections, toolServerMap) {
 }
 
 // ---------------------------------------------------------------------------
-// Ollama Streaming
+// Provider-Agnostic Streaming (via adapters)
 // ---------------------------------------------------------------------------
 
-async function chatWithOptionalThinkingStream({
+async function streamWithAdapter({
   messages, tools, model, thinkingEnabled,
-  onThinkingChunk, onContentChunk, ollamaClient, signal,
+  onThinkingChunk, onContentChunk, providerConfig, csrfToken, signal,
 }) {
-  const responseStream = await ollamaClient.chat({
-    model, messages, think: Boolean(thinkingEnabled), tools,
-    options: { temperature: 0, num_ctx: 16384 },
-    stream: true,
+  const { provider } = providerConfig;
+  const adapter = PROVIDER_ADAPTERS[provider] || openaiStreamChat;
+
+  return adapter({
+    ...providerConfig,
+    model,
+    messages,
+    tools,
+    csrfToken,
+    signal,
+    onThinkingChunk: thinkingEnabled ? onThinkingChunk : undefined,
+    onContentChunk,
   });
-
-  const merged = {};
-  const mergedMessage = { role: "assistant", content: "", thinking: "", tool_calls: null };
-  let thinkingBuffer = "";
-  let lastFlushMs = Date.now();
-
-  const flushThinking = async (force = false) => {
-    if (!thinkingBuffer) return;
-    const shouldFlush = force || thinkingBuffer.length >= 80 ||
-      /[.!?\n:]$/.test(thinkingBuffer) || Date.now() - lastFlushMs >= 400;
-    if (!shouldFlush) return;
-    onThinkingChunk?.(thinkingBuffer);
-    thinkingBuffer = "";
-    lastFlushMs = Date.now();
-  };
-
-  for await (const chunk of responseStream) {
-    if (signal?.aborted) break;
-    const msg = chunk?.message && typeof chunk.message === "object" ? chunk.message : {};
-
-    if (typeof msg.thinking === "string" && msg.thinking) {
-      mergedMessage.thinking += msg.thinking;
-      thinkingBuffer += msg.thinking;
-      await flushThinking(false);
-    }
-    if (typeof msg.content === "string" && msg.content) {
-      mergedMessage.content += msg.content;
-      onContentChunk?.(msg.content);
-    }
-    if (Array.isArray(msg.tool_calls) && msg.tool_calls.length) {
-      mergedMessage.tool_calls = mergeToolCalls(mergedMessage.tool_calls ?? [], msg.tool_calls);
-    }
-
-    for (const key of [
-      "model", "created_at", "done", "done_reason", "total_duration",
-      "load_duration", "prompt_eval_count", "prompt_eval_duration",
-      "eval_count", "eval_duration",
-    ]) {
-      if (Object.prototype.hasOwnProperty.call(chunk, key)) merged[key] = chunk[key];
-    }
-  }
-
-  await flushThinking(true);
-  if (mergedMessage.tool_calls === null) delete mergedMessage.tool_calls;
-  merged.message = mergedMessage;
-  return merged;
 }
 
 // ---------------------------------------------------------------------------
@@ -257,17 +372,36 @@ async function processToolCalls(
       }
     }
 
-    // Collect visualization specs (from TethysDash MCP or any viz-returning server)
+    // Collect visualization specs from the ORIGINAL result (before truncation)
     if (toolResult && typeof toolResult === "object" && toolResult.visualization) {
       state.pendingVisualizations.push(toolResult.visualization);
     }
 
+    // Truncate large results before storing in conversation history
+    let resultContent = toolResult && typeof toolResult === "object"
+      ? JSON.stringify(toolResult)
+      : String(toolResult ?? "");
+
+    if (resultContent.length > MAX_TOOL_RESULT_CHARS) {
+      if (toolResult?.visualization) {
+        // Preserve visualization reference in a compact summary
+        resultContent = JSON.stringify({
+          visualization: { source: toolResult.visualization.source, vizType: toolResult.visualization.vizType },
+          _truncated: true,
+          _originalChars: resultContent.length,
+        });
+      } else {
+        const originalLen = resultContent.length;
+        resultContent = resultContent.slice(0, MAX_TOOL_RESULT_CHARS)
+          + `\n...[truncated, full result was ${originalLen} chars]`;
+      }
+    }
+
     messages.push({
       role: "tool",
+      tool_call_id: toolCall.id || toolName,
       tool_name: toolName,
-      content: toolResult && typeof toolResult === "object"
-        ? JSON.stringify(toolResult)
-        : String(toolResult ?? ""),
+      content: resultContent,
     });
 
     const errText = toolErrorCheck ? toolErrorCheck(toolResult) : null;
@@ -283,16 +417,6 @@ async function processToolCalls(
 }
 
 // ---------------------------------------------------------------------------
-// Default continuation prompt
-// ---------------------------------------------------------------------------
-
-const DEFAULT_CONTINUATION = (text) =>
-  `Use the tool result above to continue. ` +
-  `If the user's request is fully answered, respond with a clear, readable summary — do not return raw JSON. ` +
-  `If more tool calls are needed to fulfill the request, make them now. ` +
-  `Original request: ${text}`;
-
-// ---------------------------------------------------------------------------
 // Main Entry Point
 // ---------------------------------------------------------------------------
 
@@ -302,9 +426,9 @@ export async function runChatSession({
   thinkingEnabled,
   onThinkingChunk,
   onContentChunk,
+  onToolStatus,
   signal,
-  ollamaHost = DEFAULT_OLLAMA_HOST,
-  ollamaApiKey = DEFAULT_OLLAMA_API_KEY,
+  providerConfig = { provider: "custom", baseUrl: "", apiKey: "" },
   csrfToken = "",
   mcpServerUrl = DEFAULT_MCP_SERVER_URL,
   mcpServers,
@@ -318,7 +442,6 @@ export async function runChatSession({
   beforeToolExecution = null,
   toolErrorCheck = null,
   repairMessageBuilder = null,
-  continuationPrompt = DEFAULT_CONTINUATION,
   beforeFirstMessage = null,
 }) {
   const state = {
@@ -330,29 +453,6 @@ export async function runChatSession({
     lastHydrofabricResult: null,
     pendingVisualizations: [],
   };
-
-  // When ollamaHost is a relative path (e.g. "/apps/tethysdash/ollama-proxy"),
-  // use proxy:true to skip the SDK's formatHost() which would mangle it into
-  // "http://apps:11434/...". The custom fetch prepends the proxy path instead.
-  const isProxyPath = ollamaHost && ollamaHost.startsWith("/");
-  const ollamaOpts = {
-    ...(isProxyPath ? { proxy: true } : { host: ollamaHost || window.location.origin }),
-    fetch: (url, init) => {
-      let finalUrl = typeof url === "string" ? url : String(url);
-      if (isProxyPath && finalUrl.startsWith("/api/")) {
-        finalUrl = `${ollamaHost}${finalUrl}`;
-      }
-      finalUrl = finalUrl.replace(/\/api\/([^/?#]+)(?=[?#]|$)/, "/api/$1/");
-      if (csrfToken) {
-        init = { ...init, headers: { ...(init?.headers || {}), "x-csrftoken": csrfToken } };
-      }
-      return fetch(finalUrl, init);
-    },
-  };
-  if (ollamaApiKey) {
-    ollamaOpts.headers = { Authorization: `Bearer ${ollamaApiKey}` };
-  }
-  const ollamaClient = new Ollama(ollamaOpts);
 
   let messages =
     Array.isArray(history) && history.length > 0
@@ -367,7 +467,31 @@ export async function runChatSession({
       ? [{ url: mcpServerUrl, name: "Default" }]
       : [];
 
-  const { connections, tools, toolServerMap } = await connectMcpServers(servers);
+  const { connections, tools, toolServerMap, toolsByServer, classificationByServer } =
+    await connectMcpServers(servers);
+
+  // Build embeddings for large full-catalog servers (lazy, cached across messages).
+  const embeddingsByServer = {};
+  for (const [serverId, serverTools] of Object.entries(toolsByServer)) {
+    const kind = classificationByServer[serverId];
+    if (kind === "full-catalog" && serverTools.length >= SMALL_CATALOG_THRESHOLD) {
+      try {
+        const { buildEmbeddingsForServer } = await import("./embeddings.js");
+        const serverUrl = servers[Number(serverId)]?.url || serverId;
+        embeddingsByServer[serverId] = await buildEmbeddingsForServer(serverUrl, serverTools);
+      } catch {
+        // Embedding module unavailable — selection will fall back to all tools
+      }
+    }
+  }
+
+  // Select tools once per user message — stable across the entire chat loop.
+  const selectedTools = await selectToolsForPrompt(
+    typeof prompt === "string" ? prompt : "",
+    toolsByServer,
+    classificationByServer,
+    embeddingsByServer,
+  );
 
   try {
     messages.push({ role: "user", content: text });
@@ -390,9 +514,9 @@ export async function runChatSession({
         return { assistantText: "", messages, aborted: true };
       }
 
-      const response = await chatWithOptionalThinkingStream({
-        messages, tools, model, thinkingEnabled,
-        onThinkingChunk, onContentChunk, ollamaClient, signal,
+      const response = await streamWithAdapter({
+        messages, tools: selectedTools, model, thinkingEnabled,
+        onThinkingChunk, onContentChunk, providerConfig, csrfToken, signal,
       });
 
       const message = getMessage(response);
@@ -427,10 +551,13 @@ export async function runChatSession({
         tool_calls: toolCalls,
       });
 
+      // All tool calls go directly to MCP servers — no discover_tools interception.
+      onToolStatus?.("calling_tools");
       let { hadError, lastErr, failedSignatures } = await processToolCalls(
         toolCalls, messages, connections, toolServerMap, state, text,
         { toolCategories, beforeToolExecution, toolErrorCheck },
       );
+      onToolStatus?.(null);
 
       // Extension point: early return for terminal results
       if (!hadError && earlyReturnCheck) {
@@ -438,39 +565,54 @@ export async function runChatSession({
         if (earlyResult) return earlyResult;
       }
 
+      // Visualizations are accumulated in state.pendingVisualizations but do NOT
+      // trigger an early return. The LLM may need additional rounds (e.g., create
+      // a variable input in round 1, then render a plugin in round 2). The normal
+      // "no tool calls" exit at the top of the loop includes pendingVisualizations.
+
       if (!hadError) {
-        messages.push({ role: "user", content: continuationPrompt(text) });
         continue;
       }
 
       // Error handling + repair loop
-      if (hadError && lastErr) {
+      // Guard uses `hadError` alone — lastErr can be falsy (empty string) when
+      // toolErrorCheck returns "". Both cases must enter this block.
+      if (hadError) {
+        const errorMsg = lastErr || "Tool call failed with unknown error.";
         let repeatedSignature = null;
         for (const sig of failedSignatures) {
           failedSigCounts[sig] = (failedSigCounts[sig] ?? 0) + 1;
           if (failedSigCounts[sig] >= 2) repeatedSignature = sig;
         }
 
-        if (MAX_TOOL_REPAIR_ATTEMPTS <= 0 && repeatedSignature && repairMessageBuilder) {
-          messages.push(repairMessageBuilder(lastErr, text, repeatedSignature));
+        // When repair attempts are disabled (MAX_TOOL_REPAIR_ATTEMPTS=0),
+        // inject a repair message for context and let the LLM retry naturally
+        // on the next loop iteration. Do NOT continue unconditionally here —
+        // the LLM gets one chance to self-correct via the normal loop.
+        if (MAX_TOOL_REPAIR_ATTEMPTS <= 0) {
+          if (repeatedSignature && repairMessageBuilder) {
+            messages.push(repairMessageBuilder(errorMsg, text, repeatedSignature));
+          } else {
+            messages.push({ role: "user", content: `Tool error: ${errorMsg}. Please try a different approach.` });
+          }
           continue;
         }
 
         for (let attempt = 1; attempt <= MAX_TOOL_REPAIR_ATTEMPTS; attempt += 1) {
           if (repairMessageBuilder) {
-            messages.push(repairMessageBuilder(lastErr, text, repeatedSignature));
+            messages.push(repairMessageBuilder(errorMsg, text, repeatedSignature));
           } else {
-            messages.push({ role: "user", content: `Tool error: ${lastErr}. Please fix and try again.` });
+            messages.push({ role: "user", content: `Tool error: ${errorMsg}. Please fix and try again.` });
           }
 
           let repairResponse;
           try {
-            repairResponse = await chatWithOptionalThinkingStream({
-              messages, tools, model, thinkingEnabled,
-              onThinkingChunk, onContentChunk, ollamaClient, signal,
+            repairResponse = await streamWithAdapter({
+              messages, tools: selectedTools, model, thinkingEnabled,
+              onThinkingChunk, onContentChunk, providerConfig, csrfToken, signal,
             });
           } catch (error) {
-            lastErr = `Ollama error during repair attempt ${attempt}: ${String(error?.message ?? error)}`;
+            lastErr = `LLM error during repair attempt ${attempt}: ${String(error?.message ?? error)}`;
             continue;
           }
 
@@ -490,10 +632,12 @@ export async function runChatSession({
             tool_calls: repairCalls,
           });
 
+          onToolStatus?.("calling_tools");
           ({ hadError, lastErr, failedSignatures } = await processToolCalls(
             repairCalls, messages, connections, toolServerMap, state, text,
             { toolCategories, beforeToolExecution, toolErrorCheck },
           ));
+          onToolStatus?.(null);
 
           for (const sig of failedSignatures) {
             failedSigCounts[sig] = (failedSigCounts[sig] ?? 0) + 1;
@@ -506,7 +650,6 @@ export async function runChatSession({
           }
 
           if (!hadError) {
-            messages.push({ role: "user", content: continuationPrompt(text) });
             break;
           }
         }

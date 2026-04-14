@@ -5,8 +5,6 @@
  * NO domain-specific logic (no NRDS, S3, hydrofabric, parquet).
  */
 
-import { DEFAULT_OLLAMA_HOST, DEFAULT_OLLAMA_API_KEY } from "../config/index.js";
-
 // ---------------------------------------------------------------------------
 // Date
 // ---------------------------------------------------------------------------
@@ -50,10 +48,25 @@ export function mergeToolCalls(existing = [], incoming = []) {
     function: { ...(call?.function ?? {}) },
   }));
 
-  incoming.forEach((call, index) => {
-    if (!call || typeof call !== "object") return;
+  for (const call of incoming) {
+    if (!call || typeof call !== "object") continue;
 
-    const current = merged[index] ?? { function: {} };
+    // Use the tool call's index field to identify which call this chunk belongs to.
+    // OpenAI streaming sends index: 0, 1, etc. for each tool call in a response.
+    // If no index, append as a new tool call.
+    const idx = typeof call.index === "number" ? call.index : merged.length;
+
+    if (idx >= merged.length) {
+      // New tool call — initialize it
+      merged[idx] = {
+        ...call,
+        function: { ...(call.function ?? {}) },
+      };
+      continue;
+    }
+
+    // Existing tool call — merge streaming chunks
+    const current = merged[idx];
     const currentFn = current.function ?? {};
     const nextFn = call.function ?? {};
 
@@ -63,30 +76,22 @@ export function mergeToolCalls(existing = [], incoming = []) {
     let mergedArgs = currArgs;
 
     if (typeof currArgs === "string" && typeof nextArgs === "string") {
+      // String + string: concatenate (OpenAI streams JSON fragments as strings)
       mergedArgs = currArgs + nextArgs;
-    } else if (
-      currArgs &&
-      typeof currArgs === "object" &&
-      !Array.isArray(currArgs) &&
-      nextArgs &&
-      typeof nextArgs === "object" &&
-      !Array.isArray(nextArgs)
-    ) {
-      mergedArgs = { ...currArgs, ...nextArgs };
     } else if (nextArgs !== undefined) {
+      // Object or first value: replace (complete argument set, not a fragment)
       mergedArgs = nextArgs;
     }
 
-    merged[index] = {
+    merged[idx] = {
       ...current,
       ...call,
       function: {
-        ...currentFn,
-        ...nextFn,
+        name: nextFn.name || currentFn.name,
         arguments: mergedArgs,
       },
     };
-  });
+  }
 
   return merged;
 }
@@ -207,124 +212,78 @@ export function omitEmptyArgs(args) {
 }
 
 // ---------------------------------------------------------------------------
-// Ollama model loading
+// Model loading (generic, proxy-based)
 // ---------------------------------------------------------------------------
 
-function normalizeOllamaModelName(entry) {
-  if (typeof entry === "string" && entry.trim()) return entry.trim();
-  if (typeof entry?.name === "string" && entry.name.trim()) return entry.name.trim();
-  if (typeof entry?.model === "string" && entry.model.trim()) return entry.model.trim();
-  return "";
-}
+export async function listModels(providerConfig = {}, options = {}) {
+  const { provider = "custom", baseUrl = "", apiKey = "" } = providerConfig;
 
-function canonicalOllamaModelKey(modelName) {
-  const normalized = normalizeOllamaModelName(modelName);
-  if (!normalized) return "";
-  return normalized.includes(":")
-    ? normalized.toLowerCase()
-    : `${normalized}:latest`.toLowerCase();
-}
-
-export function extractContextLength(showPayload) {
-  const modelInfo = showPayload?.model_info;
-  if (!modelInfo || typeof modelInfo !== "object") return null;
-  for (const key of Object.keys(modelInfo)) {
-    if (key.endsWith(".context_length")) {
-      const val = modelInfo[key];
-      return typeof val === "number" && val > 0 ? val : null;
-    }
-  }
-  return null;
-}
-
-function parseModelCapabilities(entry) {
-  if (!entry || typeof entry !== "object") return [];
-  const caps = entry.capabilities ?? entry.details?.capabilities;
-  return Array.isArray(caps)
-    ? caps.map((c) => String(c ?? "").trim().toLowerCase()).filter(Boolean)
-    : [];
-}
-
-export async function listOllamaModels(ollamaHost = DEFAULT_OLLAMA_HOST, options = {}) {
-  const host = String(ollamaHost ?? "").replace(/\/+$/, "");
-  const apiKey = typeof options?.apiKey === "string" ? options.apiKey.trim() : DEFAULT_OLLAMA_API_KEY;
-  const csrf = typeof options?.csrfToken === "string" ? options.csrfToken : "";
-  const authHeaders = {
-    ...(apiKey ? { Authorization: `Bearer ${apiKey}` } : {}),
-    ...(csrf ? { "x-csrftoken": csrf } : {}),
-  };
-  const requiredCapabilities = Array.isArray(options?.requiredCapabilities)
-    ? options.requiredCapabilities
-        .map((capability) => String(capability ?? "").trim().toLowerCase())
-        .filter(Boolean)
-    : [];
-  const extraModels = Array.isArray(options?.extraModels)
-    ? options.extraModels.map((entry) => normalizeOllamaModelName(entry)).filter(Boolean)
-    : [];
-  const response = await fetch(`${host}/api/tags/`, { headers: authHeaders });
-
-  if (!response.ok) {
-    throw new Error(`Failed to load Ollama models (${response.status})`);
-  }
-
-  const payload = await response.json();
-  const rawModels = Array.isArray(payload?.models) ? payload.models : [];
-
-  const tagsCapsMap = new Map();
-  for (const entry of rawModels) {
-    const name = normalizeOllamaModelName(entry);
-    if (name) {
-      tagsCapsMap.set(canonicalOllamaModelKey(name), parseModelCapabilities(entry));
+  if (provider === "anthropic") {
+    try {
+      const resp = await fetch("https://api.anthropic.com/v1/models?limit=50", {
+        headers: {
+          "x-api-key": apiKey,
+          "anthropic-version": "2023-06-01",
+          "anthropic-dangerous-direct-browser-access": "true",
+        },
+      });
+      if (!resp.ok) throw new Error(`${resp.status}`);
+      const json = await resp.json();
+      return (json?.data || []).map((m) => ({
+        name: m.id,
+        displayName: m.display_name || m.id,
+        contextLength: m.max_input_tokens || 200000,
+        maxTokens: m.max_tokens,
+        capabilities: ["tools"],
+        thinkingTypes: m.capabilities?.thinking?.types || null,
+      }));
+    } catch (err) {
+      console.warn("Anthropic models API failed, using fallback list:", err.message);
+      return [
+        { name: "claude-sonnet-4-20250514", contextLength: 200000, capabilities: ["tools"], thinkingTypes: { enabled: { supported: true }, adaptive: { supported: false } } },
+        { name: "claude-haiku-4-20250414", contextLength: 200000, capabilities: ["tools"], thinkingTypes: { enabled: { supported: true }, adaptive: { supported: false } } },
+        { name: "claude-opus-4-20250514", contextLength: 200000, capabilities: ["tools"], thinkingTypes: { enabled: { supported: true }, adaptive: { supported: false } } },
+      ];
     }
   }
 
-  const modelEntries = Array.from(
-    [...rawModels, ...extraModels]
-      .map((entry) => normalizeOllamaModelName(entry))
-      .filter(Boolean)
-      .reduce((deduped, modelName) => {
-        const key = canonicalOllamaModelKey(modelName);
-        if (!key || deduped.has(key)) return deduped;
-        deduped.set(key, modelName);
-        return deduped;
-      }, new Map())
-      .values(),
-  );
+  if (provider === "ollama") {
+    const csrf = typeof options?.csrfToken === "string" ? options.csrfToken : "";
+    const response = await fetch("/apps/tethysdash/ollama-proxy/api/tags/", {
+      headers: {
+        ...(csrf ? { "x-csrftoken": csrf } : {}),
+        ...(baseUrl ? { "x-ollama-host": baseUrl } : {}),
+        ...(apiKey ? { "x-ollama-key": apiKey } : {}),
+      },
+    });
+    if (!response.ok) throw new Error(`Failed to load Ollama models (${response.status})`);
+    const data = await response.json();
+    return (data?.models || []).map((m) => ({
+      name: m.name || m.model,
+      contextLength: 8192,
+      capabilities: [],
+    }));
+  }
 
-  const inspectedModels = await Promise.all(
-    modelEntries.map(async (modelName) => {
-      const canonKey = canonicalOllamaModelKey(modelName);
-      let capabilities = tagsCapsMap.get(canonKey) ?? [];
-      let contextLength = null;
+  const OpenAI = (await import("openai")).default;
+  const client = new OpenAI({
+    baseURL: baseUrl || "https://api.openai.com/v1",
+    apiKey: apiKey || "not-needed",
+    dangerouslyAllowBrowser: true,
+  });
 
-      try {
-        const showResponse = await fetch(`${host}/api/show/`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json", ...authHeaders },
-          body: JSON.stringify({ model: modelName }),
-        });
-
-        if (showResponse.ok) {
-          const showPayload = await showResponse.json();
-          const showCaps = Array.isArray(showPayload?.capabilities)
-            ? showPayload.capabilities.map((c) => String(c ?? "").trim().toLowerCase()).filter(Boolean)
-            : [];
-          if (showCaps.length) {
-            capabilities = showCaps;
-          }
-          contextLength = extractContextLength(showPayload);
-        }
-      } catch {
-        // /api/show unavailable (e.g. Ollama Cloud) — use /api/tags capabilities.
-      }
-
-      if (requiredCapabilities.length && !requiredCapabilities.every((cap) => capabilities.includes(cap))) {
-        return null;
-      }
-
-      return { name: modelName, capabilities, contextLength };
-    }),
-  );
-
-  return inspectedModels.filter(Boolean);
+  try {
+    const response = await client.models.list();
+    const models = [];
+    for await (const model of response) {
+      models.push({
+        name: model.id,
+        contextLength: 8192,
+        capabilities: [],
+      });
+    }
+    return models;
+  } catch (err) {
+    throw new Error(`Failed to load models: ${err.message}`);
+  }
 }

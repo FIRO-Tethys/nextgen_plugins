@@ -6,11 +6,10 @@
  * (NRDS tools, panel creation) is injected via `engineExtensions` and `onResult` props.
  *
  * Usage (generic sidebar):
- *   <Chatbox ollamaHost="http://localhost:5001" />
+ *   <Chatbox />
  *
  * Usage (NRDS MFE with extensions):
  *   <Chatbox
- *     ollamaHost={ollamaHost}
  *     engineExtensions={{ systemPromptBuilder, toolCategories, ... }}
  *     onResult={(result) => publishToVariables(result)}
  *   />
@@ -20,14 +19,16 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import styled, { ThemeProvider } from "styled-components";
 import chatTheme from "../theme/index.js";
 import { runChatSession } from "../engine/index.js";
-import { listOllamaModels } from "../helpers/index.js";
+import { listModels } from "../helpers/index.js";
 import { estimateTokens } from "../conversation/index.js";
 import { CONTEXT_BUDGET_RATIO } from "../config/index.js";
 import { getMcpServers, addMcpServer, removeMcpServer, toggleMcpServer } from "../storage/mcpStorage.js";
+import { getProviderConfig } from "../storage/llmProviderStorage.js";
 import ChatLog from "./ChatLog";
 import ChatInputBar from "./ChatInputBar";
 import ChatErrorPanel from "./ChatErrorPanel";
 import MCPServerPanel from "./MCPServerPanel";
+import LLMProviderPanel from "./LLMProviderPanel.jsx";
 
 const REQUIRED_MODEL_CAPABILITIES = ["tools"];
 
@@ -55,8 +56,6 @@ export default function Chatbox({
   model = "qwen3",
   modelOptions,
   prompt = "",
-  ollamaHost,
-  ollamaApiKey,
   csrfToken,
   mcpServerUrl,
   mcpServers: propMcpServers,
@@ -75,10 +74,13 @@ export default function Chatbox({
   const [selectedModel, setSelectedModel] = useState(model);
   const [isThinkingEnabled, setIsThinkingEnabled] = useState(Boolean(thinkingEnabled));
   const [loading, setLoading] = useState(false);
+  const [toolStatus, setToolStatus] = useState(null);
   const [loadingModels, setLoadingModels] = useState(false);
   const [discoveredModels, setDiscoveredModels] = useState([]);
   const [error, setError] = useState("");
   const [showMcpPanel, setShowMcpPanel] = useState(false);
+  const [providerConfig, setProviderConfig] = useState(() => getProviderConfig());
+  const [showProviderPanel, setShowProviderPanel] = useState(false);
   const [userMcpServers, setUserMcpServers] = useState(() => getMcpServers());
   const engineMessagesRef = useRef([]);
   const [contextUsage, setContextUsage] = useState({ used: 0, total: 0 });
@@ -117,6 +119,11 @@ export default function Chatbox({
   const handleRemoveMcpServer = useCallback((url) => setUserMcpServers(removeMcpServer(url)), []);
   const handleToggleMcpServer = useCallback((url) => setUserMcpServers(toggleMcpServer(url)), []);
 
+  const handleProviderSave = useCallback((newConfig) => {
+    setProviderConfig(newConfig);
+    setShowProviderPanel(false);
+  }, []);
+
   const chatLogRef = useRef(null);
   const abortRef = useRef(null);
 
@@ -138,17 +145,12 @@ export default function Chatbox({
   useEffect(() => {
     let cancelled = false;
     setLoadingModels(true);
-    listOllamaModels(ollamaHost, {
-      apiKey: ollamaApiKey,
-      csrfToken,
-      extraModels: configuredModels,
-      requiredCapabilities: REQUIRED_MODEL_CAPABILITIES,
-    })
+    listModels(providerConfig, { csrfToken })
       .then((models) => { if (!cancelled) setDiscoveredModels(models); })
-      .catch((err) => { console.warn("Unable to load Ollama model list:", err); })
+      .catch((err) => { console.warn("Unable to load model list:", err); })
       .finally(() => { if (!cancelled) setLoadingModels(false); });
     return () => { cancelled = true; };
-  }, [configuredModels, ollamaHost, ollamaApiKey, csrfToken]);
+  }, [providerConfig, csrfToken]);
 
   // Auto-select model
   useEffect(() => {
@@ -188,12 +190,12 @@ export default function Chatbox({
         signal: controller.signal,
         history: engineMessagesRef.current,
         maxContextTokens: Math.floor(contextUsage.total * CONTEXT_BUDGET_RATIO),
-        ...(ollamaHost ? { ollamaHost } : {}),
-        ...(ollamaApiKey ? { ollamaApiKey } : {}),
+        providerConfig,
         ...(csrfToken ? { csrfToken } : {}),
         mcpServers: allMcpServers,
         // Inject domain-specific extensions (empty for generic sidebar)
         ...engineExtensions,
+        onToolStatus: setToolStatus,
         onThinkingChunk: (chunk) => {
           if (!isThinkingEnabled || !chunk) return;
           accumulatedThinking += chunk;
@@ -284,9 +286,10 @@ export default function Chatbox({
       setError(String(err?.message ?? err));
     } finally {
       abortRef.current = null;
+      setToolStatus(null);
       setLoading(false);
     }
-  }, [input, loading, selectedModel, isThinkingEnabled, contextUsage.total, ollamaHost, ollamaApiKey, csrfToken, allMcpServers, isEmbedded, updateVariableInputValues, engineExtensions, onResult, resolveVisualizationUrl]);
+  }, [input, loading, selectedModel, isThinkingEnabled, contextUsage.total, providerConfig, csrfToken, allMcpServers, isEmbedded, updateVariableInputValues, engineExtensions, onResult, resolveVisualizationUrl]);
 
   const hasMessages = messages.length > 0 || loading;
 
@@ -306,8 +309,21 @@ export default function Chatbox({
       contextUsage={contextUsage}
       onOpenMcpPanel={() => setShowMcpPanel(true)}
       mcpServerCount={allMcpServers.length}
+      showProviderPanel={showProviderPanel}
+      onToggleProviderPanel={() => setShowProviderPanel((p) => !p)}
+      providerConfig={providerConfig}
     />
   );
+
+  if (showProviderPanel) {
+    return (
+      <ThemeProvider theme={chatTheme}>
+        <Shell $hasMessages>
+          <LLMProviderPanel onSave={handleProviderSave} />
+        </Shell>
+      </ThemeProvider>
+    );
+  }
 
   if (showMcpPanel) {
     return (
@@ -348,6 +364,7 @@ export default function Chatbox({
           isThinkingEnabled={isThinkingEnabled}
           thinkingBuffer={thinkingBuffer}
           contentBuffer={contentBuffer}
+          toolStatus={toolStatus}
           MessageRenderer={MessageRenderer}
         />
         <ChatErrorPanel error={error} />

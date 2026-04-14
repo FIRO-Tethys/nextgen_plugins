@@ -9,6 +9,7 @@ export default defineConfig({
       entry: {
         index: resolve(__dirname, "index.js"),
         "engine/index": resolve(__dirname, "engine/index.js"),
+        "engine/embeddings": resolve(__dirname, "engine/embeddings.js"),
         "conversation/index": resolve(__dirname, "conversation/index.js"),
         "helpers/index": resolve(__dirname, "helpers/index.js"),
         "config/index": resolve(__dirname, "config/index.js"),
@@ -35,6 +36,7 @@ export default defineConfig({
         "react-dom",
         "react/jsx-runtime",
         "styled-components",
+        "@huggingface/transformers",
       ],
       output: {
         preserveModules: false,
