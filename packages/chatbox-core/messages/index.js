@@ -26,7 +26,7 @@ export function getGenericSystemRules() {
     "",
     "Tool rules:",
     "- Use ONLY argument keys defined in the tool schema. Include ALL required arguments. Omit optional arguments when you have no value.",
-    "- When the user provides a specific value (plugin source name, model ID, file URL), use it directly — only call discovery tools (list_*, search_*) when the value is unknown.",
+    "- When the user provides a specific identifier (short snake_case names like 'nwmps' or 'nwmp_gauges_series', model IDs, file URLs), use it directly in the tool call. If the user provides a full name or description (like 'NWMP Gauges Time Series'), call the appropriate discovery tool first to resolve the exact identifier.",
     "",
     `Today is ${denverTodayIso()} (America/Denver).`,
   ];
