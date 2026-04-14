@@ -94,7 +94,7 @@ export function buildNrdsSystemMessage() {
     "SQL rules for output-file tools only:",
     "- SQL MUST query FROM output.",
     "- Never use read_parquet(...) or external table functions.",
-    "- For time series: SELECT time, flow FROM output WHERE feature_id = 1019290",
+    "- For time series: SELECT time, flow FROM output WHERE feature_id = <id>",
     "- For distinct ids: SELECT DISTINCT feature_id FROM output LIMIT 10",
     "",
     "Hydrofabric lookup rules:",

@@ -99,6 +99,16 @@ def _parse_date_or_today(date_str: Optional[str], field_name: str):
     return validated
 
 
+def _require(**kwargs):
+    """Validate that required parameters are not None. Returns error dict or None."""
+    missing = [k for k, v in kwargs.items() if v is None]
+    if missing:
+        discovery = {"model": "list_available_models", "forecast": "list_available_forecasts", "vpu": "list_available_vpus", "query": "the query is required"}
+        hints = [f"{k} (use {discovery.get(k, 'discovery')})" for k in missing]
+        return {"error": f"Missing required parameters: {', '.join(hints)}. Call the appropriate discovery tool first."}
+    return None
+
+
 @mcp.tool(name="list_available_models", description="List available NRDS models. It should not have any arguments when called.")
 def list_available_models_tool() -> Dict[str, Any]:
     LOGGER.info("Tool list_available_models called")
@@ -116,12 +126,12 @@ def list_available_models_tool() -> Dict[str, Any]:
     description=(
         "List available dates for a given model (returns id + label). "
         "Supports date-range filtering with start/end (ISO YYYY-MM-DD or YYYY/MM/DD). "
-        "Defaults: start=2025-08-01, end=today (America/Denver). "
+        "Defaults: start=earliest available date, end=today (America/Denver). "
         "Pagination is applied after filtering using offset/limit."
     ),
 )
 def list_available_dates_tool(
-    model: Annotated[MODELS, Field(description="Model id")] = "cfe_nom",
+    model: Annotated[MODELS, Field(description="Model id — call list_available_models to discover valid values")] = None,
     offset: Annotated[
         int, Field(ge=0, description="Number of items to skip for pagination (default 0)")
     ] = 0,
@@ -134,7 +144,7 @@ def list_available_dates_tool(
         Field(
             default=DEFAULT_START,
             pattern=DATE_PATTERN,
-            description="Start date (inclusive). ISO YYYY-MM-DD or YYYY/MM/DD. Default 2025-08-01.",
+            description="Start date (inclusive). ISO YYYY-MM-DD or YYYY/MM/DD. Defaults to earliest available date.",
         ),
     ] = DEFAULT_START,
     end: Annotated[
@@ -146,6 +156,9 @@ def list_available_dates_tool(
         ),
     ] = None,
 ) -> Dict[str, Any]:
+    err = _require(model=model)
+    if err:
+        return err
     LOGGER.info(
         "Tool list_available_dates called model=%s offset=%s limit=%s start=%s end=%s",
         model,
@@ -206,7 +219,7 @@ def list_available_dates_tool(
     description="List available forecasts for a given model and date",
 )
 def list_available_forecasts_tool(
-    model: Annotated[MODELS, Field(description="Model id")] = "cfe_nom",
+    model: Annotated[MODELS, Field(description="Model id — call list_available_models to discover valid values")] = None,
     date: Annotated[
         Optional[str],
         Field(
@@ -215,6 +228,9 @@ def list_available_forecasts_tool(
         ),
     ] = None,
 ) -> Dict[str, Any]:
+    err = _require(model=model)
+    if err:
+        return err
     LOGGER.info("Tool list_available_forecasts called model=%s date=%s", model, date)
     end_date = _parse_date_or_today(date, "date")
     raw = _get_json_raw(
@@ -235,7 +251,7 @@ def list_available_forecasts_tool(
     description="List available cycles for a given model, date, and forecast",
 )
 def list_available_cycles_tool(
-    model: Annotated[MODELS, Field(description="Model id")] = "cfe_nom",
+    model: Annotated[MODELS, Field(description="Model id — call list_available_models to discover valid values")] = None,
     date: Annotated[
         Optional[str],
         Field(
@@ -246,11 +262,14 @@ def list_available_cycles_tool(
     forecast: Annotated[
         FORECASTS,
         Field(
-            description="Forecast id",
+            description="Forecast id — call list_available_forecasts to discover valid values",
             pattern=r"^(short_range|medium_range|analysis_assim_extend)$",
         ),
-    ] = "short_range",
+    ] = None,
 ) -> Dict[str, Any]:
+    err = _require(model=model, forecast=forecast)
+    if err:
+        return err
     forecast_id = _as_id(forecast)
     LOGGER.info(
         "Tool list_available_cycles called model=%s date=%s forecast=%s",
@@ -279,7 +298,7 @@ def list_available_cycles_tool(
     description="List available VPUs for a given model, date, forecast, and cycle",
 )
 def list_available_vpus_tool(
-    model: Annotated[MODELS, Field(description="Model id")] = "cfe_nom",
+    model: Annotated[MODELS, Field(description="Model id — call list_available_models to discover valid values")] = None,
     date: Annotated[
         Optional[str],
         Field(
@@ -290,10 +309,10 @@ def list_available_vpus_tool(
     forecast: Annotated[
         FORECASTS,
         Field(
-            description="Forecast id",
+            description="Forecast id — call list_available_forecasts to discover valid values",
             pattern=r"^(short_range|medium_range|analysis_assim_extend)$",
         ),
-    ] = "short_range",
+    ] = None,
     cycle: Annotated[
         str,
         Field(
@@ -304,6 +323,9 @@ def list_available_vpus_tool(
         ),
     ] = "00",
 ) -> Dict[str, Any]:
+    err = _require(model=model, forecast=forecast)
+    if err:
+        return err
     forecast_id = _as_id(forecast)
     LOGGER.info(
         "Tool list_available_vpus called model=%s date=%s forecast=%s cycle=%s",
@@ -334,7 +356,7 @@ def list_available_vpus_tool(
     description="List available output files for a given model, date, forecast, cycle, and VPU (accepts id or label, including subregion VPUs). Optional ensemble member for applicable forecast.",
 )
 def list_available_output_files_tool(
-    model: Annotated[MODELS, Field(description="Model id")] = "cfe_nom",
+    model: Annotated[MODELS, Field(description="Model id — call list_available_models to discover valid values")] = None,
     date: Annotated[
         Optional[str],
         Field(
@@ -345,10 +367,10 @@ def list_available_output_files_tool(
     forecast: Annotated[
         FORECASTS,
         Field(
-            description="Forecast id",
+            description="Forecast id — call list_available_forecasts to discover valid values",
             pattern=r"^(short_range|medium_range|analysis_assim_extend)$",
         ),
-    ] = "short_range",
+    ] = None,
     cycle: Annotated[
         str,
         Field(
@@ -361,13 +383,16 @@ def list_available_output_files_tool(
     vpu: Annotated[
         str,
         Field(
-            description="VPU id or label (e.g. VPU_06, VPU 6, 6, VPU_03W, VPU 3W, 3W)"
+            description="VPU identifier — call list_available_vpus to discover valid values. Accepts formats like '06', 'VPU_06', or '3W'"
         ),
-    ] = "VPU_06",
+    ] = None,
     ensemble: Annotated[
         Optional[str], Field(description="Optional ensemble member (1 or 16)", pattern=r"^(?:1|16)$")
     ] = None,
 ) -> Dict[str, Any]:
+    err = _require(model=model, forecast=forecast, vpu=vpu)
+    if err:
+        return err
     LOGGER.info(
         "Tool list_available_output_files called model=%s date=%s forecast=%s cycle=%s vpu=%s ensemble=%s",
         model,
@@ -407,19 +432,19 @@ def list_available_output_files_tool(
     description="Resolve a single output file path for model/date/forecast/cycle/vpu. Provide exactly one of file_name or index.",
 )
 def resolve_output_file_tool(
-    model: Annotated[MODELS, Field(description="Model id")] = "cfe_nom",
+    model: Annotated[MODELS, Field(description="Model id — call list_available_models to discover valid values")] = None,
     date: Annotated[
         Optional[str],
         Field(description="YYYY-MM-DD or YYYY/MM/DD", pattern=DATE_PATTERN),
     ] = None,
-    forecast: Annotated[FORECASTS, Field(description="Forecast id")] = "short_range",
+    forecast: Annotated[FORECASTS, Field(description="Forecast id — call list_available_forecasts to discover valid values")] = None,
     cycle: Annotated[str, Field(description="Cycle", pattern=r"^(?:[01]\d|2[0-3])$")] = "00",
     vpu: Annotated[
         str,
         Field(
-            description="VPU id or label (e.g. VPU_06, VPU 6, 6, VPU_03W, VPU 3W, 3W)"
+            description="VPU identifier — call list_available_vpus to discover valid values. Accepts formats like '06', 'VPU_06', or '3W'"
         ),
-    ] = "VPU_06",
+    ] = None,
     ensemble: Annotated[
         Optional[str],
         Field(description="Ensemble (medium_range)", pattern=r"^\d+$"),
@@ -433,6 +458,9 @@ def resolve_output_file_tool(
         Field(description="0-based index into sorted file list", ge=0),
     ] = 0,
 ) -> Dict[str, Any]:
+    err = _require(model=model, forecast=forecast, vpu=vpu)
+    if err:
+        return err
     LOGGER.info(
         "Tool resolve_output_file called model=%s date=%s forecast=%s cycle=%s vpu=%s ensemble=%s file_name=%s index=%s",
         model,
@@ -489,12 +517,12 @@ def resolve_output_file_tool(
     ),
 )
 def query_output_file_from_output_selector_tool(
-    model: Annotated[MODELS, Field(description="Model id")] = "cfe_nom",
+    model: Annotated[MODELS, Field(description="Model id — call list_available_models to discover valid values")] = None,
     date: Annotated[
         Optional[str],
         Field(description="YYYY-MM-DD or YYYY/MM/DD", pattern=DATE_PATTERN),
     ] = None,
-    forecast: Annotated[FORECASTS, Field(description="Forecast id")] = "short_range",
+    forecast: Annotated[FORECASTS, Field(description="Forecast id — call list_available_forecasts to discover valid values")] = None,
     cycle: Annotated[
         str,
         Field(
@@ -505,9 +533,9 @@ def query_output_file_from_output_selector_tool(
     vpu: Annotated[
         str,
         Field(
-            description="VPU id or label (e.g. VPU_06, VPU 6, 6, VPU_03W, VPU 3W, 3W)"
+            description="VPU identifier — call list_available_vpus to discover valid values. Accepts formats like '06', 'VPU_06', or '3W'"
         ),
-    ] = "VPU_06",
+    ] = None,
     query: Annotated[
         str,
         Field(
@@ -541,6 +569,9 @@ def query_output_file_from_output_selector_tool(
         ),
     ] = 0,
 ) -> Dict[str, Any]:
+    err = _require(model=model, forecast=forecast, vpu=vpu)
+    if err:
+        return err
     LOGGER.info(
         "Tool query_output_file_from_output_selector called model=%s date=%s forecast=%s cycle=%s "
         "vpu=%s ensemble=%s file_name=%s index=%s query_preview=%s",
@@ -650,7 +681,7 @@ def create_plotly_chart_from_parquet_output_file_tool(
             ),
             pattern=r"(?is)^\s*(?:WITH\b.*?\bSELECT\b|SELECT\b).*$",
         ),
-    ],
+    ] = None,
     title: Annotated[
         Optional[str],
         Field(description="Optional chart title."),
@@ -760,12 +791,12 @@ def build_hydrofabric_feature_map_config(
     ),
 )
 def create_plotly_chart_from_output_selector_tool(
-    model: Annotated[MODELS, Field(description="Model id")] = "cfe_nom",
+    model: Annotated[MODELS, Field(description="Model id — call list_available_models to discover valid values")] = None,
     date: Annotated[
         Optional[str],
         Field(description="YYYY-MM-DD or YYYY/MM/DD", pattern=DATE_PATTERN),
     ] = None,
-    forecast: Annotated[FORECASTS, Field(description="Forecast id")] = "short_range",
+    forecast: Annotated[FORECASTS, Field(description="Forecast id — call list_available_forecasts to discover valid values")] = None,
     cycle: Annotated[
         str,
         Field(
@@ -776,9 +807,9 @@ def create_plotly_chart_from_output_selector_tool(
     vpu: Annotated[
         str,
         Field(
-            description="VPU id or label (e.g. VPU_06, VPU 6, 6, VPU_03W, VPU 3W, 3W)"
+            description="VPU identifier — call list_available_vpus to discover valid values. Accepts formats like '06', 'VPU_06', or '3W'"
         ),
-    ] = "VPU_06",
+    ] = None,
     query: Annotated[
         str,
         Field(
@@ -789,7 +820,7 @@ def create_plotly_chart_from_output_selector_tool(
             ),
             pattern=r"(?is)^\s*(?:WITH\b.*?\bSELECT\b|SELECT\b).*$",
         ),
-    ] = "SELECT time, flow FROM output",
+    ] = None,
     title: Annotated[
         Optional[str],
         Field(description="Optional chart title."),
@@ -817,6 +848,9 @@ def create_plotly_chart_from_output_selector_tool(
         ),
     ] = 0,
 ) -> Dict[str, Any]:
+    err = _require(model=model, forecast=forecast, vpu=vpu, query=query)
+    if err:
+        return err
     LOGGER.info(
         "Tool create_plotly_chart_from_output_selector called model=%s date=%s forecast=%s cycle=%s "
         "vpu=%s ensemble=%s file_name=%s index=%s title=%s query_preview=%s",
