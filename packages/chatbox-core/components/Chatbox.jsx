@@ -225,9 +225,12 @@ export default function Chatbox({
         onResult(result, { isEmbedded, updateVariableInputValues });
       }
 
-      // Dispatch visualization specs from TethysDash MCP (generic path)
+      // Dispatch visualization specs from TethysDash MCP as a single batch
+      // event. Individual events in a loop cause duplicate grid item keys
+      // and lost items because handleAddVisualization reads a stale ref
+      // between dispatches (no re-render between synchronous events).
       if (result.visualizations?.length > 0) {
-        for (const viz of result.visualizations) {
+        const panels = result.visualizations.map((viz) => {
           // Resolve MFE URL for client_custom_remote plugins
           if (viz.vizType === "custom" && viz.scope && !viz.url && resolveVisualizationUrl) {
             viz.url = resolveVisualizationUrl(viz);
@@ -252,16 +255,14 @@ export default function Chatbox({
           } else {
             args = viz.args;
           }
-          window.dispatchEvent(
-            new CustomEvent(ADD_VISUALIZATION_EVENT, {
-              detail: {
-                source: viz.source,
-                args,
-                position: { w: viz.w, h: viz.h },
-              },
-            }),
-          );
-        }
+          return { source: viz.source, args, w: viz.w, h: viz.h };
+        });
+
+        window.dispatchEvent(
+          new CustomEvent(ADD_VISUALIZATION_EVENT, {
+            detail: { batch: true, panels },
+          }),
+        );
       }
 
       // Extract plotlyFigure from visualization specs for inline rendering
