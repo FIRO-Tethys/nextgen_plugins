@@ -28,6 +28,14 @@ export function getGenericSystemRules() {
     "- Use ONLY argument keys defined in the tool schema. Include ALL required arguments. Omit optional arguments when you have no value.",
     "- When the user provides a specific identifier (short snake_case name, model ID, file URL), use it directly. If the user provides a full name or description, call the appropriate discovery tool first to resolve the exact identifier.",
     "",
+    "Dashboard grid layout:",
+    "- The grid is 100 columns wide. Set w=100 for full width, w=50 for half, w=25 for quarter.",
+    "- Height is in row units (~10px each). Convert pixels: h = pixels / 10 (e.g., 500px → h=50).",
+    "- Panels placed in the same batch tile automatically: full-width panels (w=100) stack vertically; two w=50 panels sit side by side.",
+    "- When the user describes layout (e.g., 'full width input above a tall chart'), set w and h on each tool call accordingly.",
+    "- Compact controls (variable inputs, text): w=100 h=8 full-width, or w=25 h=12 compact.",
+    "- Charts and plugins: w=100 h=40 full-width, w=50 h=25 half-width.",
+    "",
     `Today is ${denverTodayIso()} (America/Denver).`,
   ];
 }
