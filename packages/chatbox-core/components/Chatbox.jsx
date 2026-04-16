@@ -225,6 +225,20 @@ export default function Chatbox({
         onResult(result, { isEmbedded, updateVariableInputValues });
       }
 
+      // Pre-compute layer update groups so same-conversation layers can be
+      // merged into their parent visualization before dispatch. This avoids
+      // a timing race: requestAnimationFrame does not guarantee React has
+      // committed the new grid item from add-visualization before the
+      // update-visualization handler reads gridItemsUpdated.current.
+      const layerUpdatesByUuid = {};
+      const matchedLayerUuids = new Set();
+      if (result.layerUpdates?.length > 0) {
+        for (const update of result.layerUpdates) {
+          if (!layerUpdatesByUuid[update.map_uuid]) layerUpdatesByUuid[update.map_uuid] = [];
+          layerUpdatesByUuid[update.map_uuid].push(update.layer);
+        }
+      }
+
       // Dispatch visualization specs from TethysDash MCP as a single batch
       // event. Individual events in a loop cause duplicate grid item keys
       // and lost items because handleAddVisualization reads a stale ref
@@ -258,6 +272,18 @@ export default function Chatbox({
           return { source: viz.source, args, w: viz.w, h: viz.h, uuid: viz.uuid };
         });
 
+        // Merge same-conversation layer updates into matching panels.
+        // The map is created with its layers already included — no timing
+        // gap between add-visualization and update-visualization events.
+        for (const panel of panels) {
+          if (panel.uuid && layerUpdatesByUuid[panel.uuid]) {
+            if (!panel.args) panel.args = {};
+            if (!Array.isArray(panel.args.layers)) panel.args.layers = [];
+            panel.args.layers.push(...layerUpdatesByUuid[panel.uuid]);
+            matchedLayerUuids.add(panel.uuid);
+          }
+        }
+
         window.dispatchEvent(
           new CustomEvent(ADD_VISUALIZATION_EVENT, {
             detail: { batch: true, panels },
@@ -265,26 +291,19 @@ export default function Chatbox({
         );
       }
 
-      // Dispatch layer updates (from add_map_service_layer) as update events.
-      // Groups updates by map UUID into a single event per map to avoid the
-      // stale-ref problem (same class as the batch dispatch fix).
-      // Uses requestAnimationFrame to ensure the add-visualization batch above
-      // has been committed to React state before the update handler reads it.
-      if (result.layerUpdates?.length > 0) {
-        const byUuid = {};
-        for (const update of result.layerUpdates) {
-          if (!byUuid[update.map_uuid]) byUuid[update.map_uuid] = [];
-          byUuid[update.map_uuid].push(update.layer);
-        }
+      // Dispatch layer updates only for UUIDs that didn't match a
+      // visualization in the current batch (pre-existing maps from previous
+      // sessions). These grid items already exist in React state, so the
+      // requestAnimationFrame timing is not a concern.
+      const unmatchedUpdates = Object.entries(layerUpdatesByUuid).filter(
+        ([uuid]) => !matchedLayerUuids.has(uuid),
+      );
+      if (unmatchedUpdates.length > 0) {
         requestAnimationFrame(() => {
-          for (const [uuid, layers] of Object.entries(byUuid)) {
+          for (const [uuid, layers] of unmatchedUpdates) {
             window.dispatchEvent(
               new CustomEvent("tethysdash:update-visualization", {
-                detail: {
-                  uuid,
-                  operation: "append_layers",
-                  layers,
-                },
+                detail: { uuid, operation: "append_layers", layers },
               }),
             );
           }
