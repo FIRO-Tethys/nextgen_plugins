@@ -377,6 +377,11 @@ async function processToolCalls(
       state.pendingVisualizations.push(toolResult.visualization);
     }
 
+    // Collect layer updates (from add_map_service_layer) before truncation
+    if (toolResult && typeof toolResult === "object" && toolResult.layer_update) {
+      state.pendingLayerUpdates.push(toolResult.layer_update);
+    }
+
     // Truncate large results before storing in conversation history
     let resultContent = toolResult && typeof toolResult === "object"
       ? JSON.stringify(toolResult)
@@ -452,6 +457,7 @@ export async function runChatSession({
     lastMapResult: null,
     lastHydrofabricResult: null,
     pendingVisualizations: [],
+    pendingLayerUpdates: [],
   };
 
   let messages =
@@ -540,6 +546,9 @@ export async function runChatSession({
             : undefined,
           visualizations: state.pendingVisualizations.length > 0
             ? state.pendingVisualizations
+            : undefined,
+          layerUpdates: state.pendingLayerUpdates.length > 0
+            ? state.pendingLayerUpdates
             : undefined,
           messages,
         };

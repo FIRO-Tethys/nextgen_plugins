@@ -255,7 +255,7 @@ export default function Chatbox({
           } else {
             args = viz.args;
           }
-          return { source: viz.source, args, w: viz.w, h: viz.h };
+          return { source: viz.source, args, w: viz.w, h: viz.h, uuid: viz.uuid };
         });
 
         window.dispatchEvent(
@@ -263,6 +263,26 @@ export default function Chatbox({
             detail: { batch: true, panels },
           }),
         );
+      }
+
+      // Dispatch layer updates (from add_map_service_layer) as update events.
+      // Uses requestAnimationFrame to ensure the add-visualization batch above
+      // has been committed to React state before the update handler reads it.
+      if (result.layerUpdates?.length > 0) {
+        const updates = result.layerUpdates;
+        requestAnimationFrame(() => {
+          for (const update of updates) {
+            window.dispatchEvent(
+              new CustomEvent("tethysdash:update-visualization", {
+                detail: {
+                  uuid: update.map_uuid,
+                  operation: "append_layer",
+                  layer: update.layer,
+                },
+              }),
+            );
+          }
+        });
       }
 
       // Extract plotlyFigure from visualization specs for inline rendering
