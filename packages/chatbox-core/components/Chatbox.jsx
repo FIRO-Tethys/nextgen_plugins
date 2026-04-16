@@ -266,18 +266,24 @@ export default function Chatbox({
       }
 
       // Dispatch layer updates (from add_map_service_layer) as update events.
+      // Groups updates by map UUID into a single event per map to avoid the
+      // stale-ref problem (same class as the batch dispatch fix).
       // Uses requestAnimationFrame to ensure the add-visualization batch above
       // has been committed to React state before the update handler reads it.
       if (result.layerUpdates?.length > 0) {
-        const updates = result.layerUpdates;
+        const byUuid = {};
+        for (const update of result.layerUpdates) {
+          if (!byUuid[update.map_uuid]) byUuid[update.map_uuid] = [];
+          byUuid[update.map_uuid].push(update.layer);
+        }
         requestAnimationFrame(() => {
-          for (const update of updates) {
+          for (const [uuid, layers] of Object.entries(byUuid)) {
             window.dispatchEvent(
               new CustomEvent("tethysdash:update-visualization", {
                 detail: {
-                  uuid: update.map_uuid,
-                  operation: "append_layer",
-                  layer: update.layer,
+                  uuid,
+                  operation: "append_layers",
+                  layers,
                 },
               }),
             );
