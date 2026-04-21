@@ -310,6 +310,110 @@ export default function Chatbox({
         });
       }
 
+      // Generic update-protocol patches (R1+). Each envelope from the engine
+      // is {uuid, source, ops}; group by UUID preserving source. Two rejection
+      // paths fire before dispatch:
+      //
+      //   1. target_not_yet_persisted (R5a simplified per Option A):
+      //      the UUID was created in the same turn. The reducer has not
+      //      received the grid item yet, so the patch has nothing to apply
+      //      against. The LLM must split into two turns — include the
+      //      change in the create call, or patch after the next
+      //      dashboard_state injection reflects the new UUID.
+      //
+      //   2. cross_source_collision (R5a): add_map_service_layer + a
+      //      bare-index-op patch on the same UUID's /args/layers produces
+      //      order-dependent results (which layer does /args/layers/2
+      //      refer to — pre- or post-add?). Reject to force the LLM to
+      //      split into two turns.
+      //
+      // Same-batch merge is deferred to Future Work (per plan). The
+      // rejection path is forward-compatible: replacing it with a merge
+      // later is a ~50-line Chatbox.jsx change with no protocol break.
+      const patchesByUuid = {};
+      if (result.patches?.length > 0) {
+        for (const patch of result.patches) {
+          const uuid = patch?.uuid;
+          if (!uuid) continue;
+          if (!patchesByUuid[uuid]) {
+            patchesByUuid[uuid] = { source: patch.source, ops: [] };
+          }
+          if (Array.isArray(patch.ops)) {
+            patchesByUuid[uuid].ops.push(...patch.ops);
+          }
+        }
+      }
+
+      // Rejection 1: same-batch (UUID was created this turn).
+      const sameBatchUuids = new Set(
+        (result.visualizations || [])
+          .map((v) => v?.uuid)
+          .filter(Boolean),
+      );
+      const rejectedSameBatch = [];
+      for (const uuid of Object.keys(patchesByUuid)) {
+        if (sameBatchUuids.has(uuid)) {
+          rejectedSameBatch.push(uuid);
+          delete patchesByUuid[uuid];
+        }
+      }
+      if (rejectedSameBatch.length > 0 && typeof console !== "undefined") {
+        console.warn(
+          "[chatbox] target_not_yet_persisted: patches skipped for UUIDs " +
+            "created in the same turn. Patch in a subsequent turn after " +
+            "dashboard_state reflects the new UUID.",
+          rejectedSameBatch,
+        );
+      }
+
+      // Rejection 2: cross_source_collision (add_map_service_layer +
+      // bare-index-op patch on same UUID's /args/layers). Only bare-index
+      // targets collide (/args/layers/N or /args/layers/-); field-level
+      // patches under a layer (/args/layers/N/fieldName) are fine.
+      const BARE_LAYER_INDEX = /^\/args\/layers\/(\d+|-)$/;
+      const rejectedCollision = [];
+      for (const uuid of Object.keys(patchesByUuid)) {
+        if (!layerUpdatesByUuid[uuid]) continue;
+        const hasBareIndexOp = patchesByUuid[uuid].ops.some(
+          (op) => typeof op?.path === "string" && BARE_LAYER_INDEX.test(op.path),
+        );
+        if (hasBareIndexOp) {
+          rejectedCollision.push(uuid);
+          delete patchesByUuid[uuid];
+        }
+      }
+      if (rejectedCollision.length > 0 && typeof console !== "undefined") {
+        console.warn(
+          "[chatbox] cross_source_collision: patches skipped for UUIDs " +
+            "where add_map_service_layer + bare-index patch ops collide " +
+            "on /args/layers. Split into two turns so ordering is explicit.",
+          rejectedCollision,
+        );
+      }
+
+      // Batch dispatch: ONE tethysdash:update-visualization event carrying
+      // all remaining patches, scheduled via rAF alongside the layer-update
+      // path. Per docs/solutions/logic-errors/stale-ref-batch-dispatch-*,
+      // never dispatch N events in a loop when a batch shape exists.
+      const patchEntries = Object.entries(patchesByUuid);
+      if (patchEntries.length > 0) {
+        requestAnimationFrame(() => {
+          window.dispatchEvent(
+            new CustomEvent("tethysdash:update-visualization", {
+              detail: {
+                batch: true,
+                operation: "apply_patch",
+                patches: patchEntries.map(([uuid, { source, ops }]) => ({
+                  uuid,
+                  source,
+                  ops,
+                })),
+              },
+            }),
+          );
+        });
+      }
+
       // Extract plotlyFigure from visualization specs for inline rendering
       // (standalone) and text indicators (sidebar/MFE embedded modes)
       const plotlyViz = result.visualizations?.find((v) => v.vizType === "plotly");
