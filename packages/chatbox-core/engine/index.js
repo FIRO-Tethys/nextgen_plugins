@@ -323,7 +323,7 @@ async function streamWithAdapter({
 
 async function processToolCalls(
   toolCalls, messages, connections, toolServerMap, state, originalUserText,
-  { toolCategories, beforeToolExecution, toolErrorCheck },
+  { toolCategories, beforeToolExecution, toolErrorCheck, afterToolExecution },
 ) {
   let hadError = false;
   let lastErr = null;
@@ -382,6 +382,11 @@ async function processToolCalls(
       state.pendingLayerUpdates.push(toolResult.layer_update);
     }
 
+    // Collect patch envelopes (from patch_visualization) before truncation
+    if (toolResult && typeof toolResult === "object" && toolResult.patch_update) {
+      state.pendingPatches.push(toolResult.patch_update);
+    }
+
     // Truncate large results before storing in conversation history
     let resultContent = toolResult && typeof toolResult === "object"
       ? JSON.stringify(toolResult)
@@ -408,6 +413,26 @@ async function processToolCalls(
       tool_name: toolName,
       content: resultContent,
     });
+
+    // Extension point: domain-specific decoration after the tool result is
+    // pushed. Consumers may append an in-turn delta / state summary to the
+    // tool-result message so the LLM sees evolving dashboard state across
+    // rounds without waiting for the next turn's state-injection (R6).
+    //
+    // MUST NOT signal an early return from the main while loop (R12): the
+    // LLM is the sole completion authority. Hook receives the raw result
+    // and the pushed message for read or decoration only.
+    if (afterToolExecution) {
+      try {
+        await afterToolExecution(toolName, args, toolResult, state, messages);
+      } catch (hookErr) {
+        // Hook errors must not break the tool-use loop — log and proceed.
+        // The underlying tool already executed successfully to this point.
+        if (typeof console !== "undefined" && console.warn) {
+          console.warn("afterToolExecution hook threw:", hookErr);
+        }
+      }
+    }
 
     const errText = toolErrorCheck ? toolErrorCheck(toolResult) : null;
     if (errText) {
@@ -448,6 +473,7 @@ export async function runChatSession({
   toolErrorCheck = null,
   repairMessageBuilder = null,
   beforeFirstMessage = null,
+  afterToolExecution = null,
 }) {
   const state = {
     lastChartResult: null,
@@ -458,6 +484,7 @@ export async function runChatSession({
     lastHydrofabricResult: null,
     pendingVisualizations: [],
     pendingLayerUpdates: [],
+    pendingPatches: [],
   };
 
   let messages =
@@ -550,6 +577,9 @@ export async function runChatSession({
           layerUpdates: state.pendingLayerUpdates.length > 0
             ? state.pendingLayerUpdates
             : undefined,
+          patches: state.pendingPatches.length > 0
+            ? state.pendingPatches
+            : undefined,
           messages,
         };
       }
@@ -564,7 +594,7 @@ export async function runChatSession({
       onToolStatus?.("calling_tools");
       let { hadError, lastErr, failedSignatures } = await processToolCalls(
         toolCalls, messages, connections, toolServerMap, state, text,
-        { toolCategories, beforeToolExecution, toolErrorCheck },
+        { toolCategories, beforeToolExecution, toolErrorCheck, afterToolExecution },
       );
       onToolStatus?.(null);
 
@@ -644,7 +674,7 @@ export async function runChatSession({
           onToolStatus?.("calling_tools");
           ({ hadError, lastErr, failedSignatures } = await processToolCalls(
             repairCalls, messages, connections, toolServerMap, state, text,
-            { toolCategories, beforeToolExecution, toolErrorCheck },
+            { toolCategories, beforeToolExecution, toolErrorCheck, afterToolExecution },
           ));
           onToolStatus?.(null);
 
