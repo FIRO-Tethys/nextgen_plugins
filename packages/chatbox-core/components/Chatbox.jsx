@@ -311,25 +311,18 @@ export default function Chatbox({
       }
 
       // Generic update-protocol patches (R1+). Each envelope from the engine
-      // is {uuid, source, ops}; group by UUID preserving source. Two rejection
-      // paths fire before dispatch:
+      // is {uuid, source, ops}; group by UUID preserving source. Dispatch
+      // order is safe for same-turn create+patch: `tethysdash:add-visualization`
+      // fires synchronously (handleAddVisualization runs to completion,
+      // updating gridItemsUpdated.current), and the patch dispatch is
+      // requestAnimationFrame-scheduled — so by the time handleUpdateVisualization
+      // runs with apply_patch, the just-created UUID is already in the ref.
+      // No special same-batch handling needed.
       //
-      //   1. target_not_yet_persisted (R5a simplified per Option A):
-      //      the UUID was created in the same turn. The reducer has not
-      //      received the grid item yet, so the patch has nothing to apply
-      //      against. The LLM must split into two turns — include the
-      //      change in the create call, or patch after the next
-      //      dashboard_state injection reflects the new UUID.
-      //
-      //   2. cross_source_collision (R5a): add_map_service_layer + a
-      //      bare-index-op patch on the same UUID's /args/layers produces
-      //      order-dependent results (which layer does /args/layers/2
-      //      refer to — pre- or post-add?). Reject to force the LLM to
-      //      split into two turns.
-      //
-      // Same-batch merge is deferred to Future Work (per plan). The
-      // rejection path is forward-compatible: replacing it with a merge
-      // later is a ~50-line Chatbox.jsx change with no protocol break.
+      // One rejection path still fires: cross_source_collision (add_map_service_layer
+      // + a bare-index-op patch on the same UUID's /args/layers). Those ARE
+      // order-dependent (which layer does /args/layers/2 refer to — pre- or
+      // post-add?), so we force the LLM to split across turns.
       const patchesByUuid = {};
       if (result.patches?.length > 0) {
         for (const patch of result.patches) {
@@ -344,29 +337,7 @@ export default function Chatbox({
         }
       }
 
-      // Rejection 1: same-batch (UUID was created this turn).
-      const sameBatchUuids = new Set(
-        (result.visualizations || [])
-          .map((v) => v?.uuid)
-          .filter(Boolean),
-      );
-      const rejectedSameBatch = [];
-      for (const uuid of Object.keys(patchesByUuid)) {
-        if (sameBatchUuids.has(uuid)) {
-          rejectedSameBatch.push(uuid);
-          delete patchesByUuid[uuid];
-        }
-      }
-      if (rejectedSameBatch.length > 0 && typeof console !== "undefined") {
-        console.warn(
-          "[chatbox] target_not_yet_persisted: patches skipped for UUIDs " +
-            "created in the same turn. Patch in a subsequent turn after " +
-            "dashboard_state reflects the new UUID.",
-          rejectedSameBatch,
-        );
-      }
-
-      // Rejection 2: cross_source_collision (add_map_service_layer +
+      // Rejection: cross_source_collision (add_map_service_layer +
       // bare-index-op patch on same UUID's /args/layers). Only bare-index
       // targets collide (/args/layers/N or /args/layers/-); field-level
       // patches under a layer (/args/layers/N/fieldName) are fine.
@@ -390,6 +361,19 @@ export default function Chatbox({
           rejectedCollision,
         );
       }
+      // Surface the rejection to the user. The MCP server already returned
+      // a success envelope (this is a client-side ordering rejection), so
+      // without a user-visible message the LLM's final "I updated it"
+      // claim is a silent lie — the user sees layers added but the patch
+      // dropped. Prepending a warning to the assistant content gives the
+      // user a clear next-step: split into two turns.
+      const rejectionWarning = rejectedCollision.length > 0
+        ? `⚠ Some edits were skipped to avoid ambiguous layer ordering ` +
+          `(cross_source_collision on UUID${rejectedCollision.length > 1 ? "s" : ""} ` +
+          `${rejectedCollision.join(", ")}). ` +
+          `Retry those edits in a separate message so the layer changes ` +
+          `apply in a well-defined order.\n\n`
+        : "";
 
       // Batch dispatch: ONE tethysdash:update-visualization event carrying
       // all remaining patches, scheduled via rAF alongside the layer-update
@@ -423,7 +407,7 @@ export default function Chatbox({
         ...prev,
         {
           role: "assistant",
-          content,
+          content: rejectionWarning + content,
           thinking: accumulatedThinking || "",
           plotlyFigure: result.plotlyFigure ?? inlinePlotly,
           mapConfig: result.mapConfig ?? null,
