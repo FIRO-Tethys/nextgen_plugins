@@ -387,6 +387,22 @@ async function processToolCalls(
       state.pendingPatches.push(toolResult.patch_update);
     }
 
+    // R16 — record patch_visualization rejections so the host chatbox can
+    // categorize them into user-facing copy. These would otherwise be
+    // invisible to the user: the engine's repair loop consumes the error
+    // and the LLM may or may not mention it in its final response.
+    if (
+      toolName === "patch_visualization" &&
+      toolResult &&
+      typeof toolResult === "object" &&
+      typeof toolResult.error === "string"
+    ) {
+      state.rejectedPatches.push({
+        error: toolResult.error,
+        args: args ?? {},
+      });
+    }
+
     // Truncate large results before storing in conversation history
     let resultContent = toolResult && typeof toolResult === "object"
       ? JSON.stringify(toolResult)
@@ -485,6 +501,11 @@ export async function runChatSession({
     pendingVisualizations: [],
     pendingLayerUpdates: [],
     pendingPatches: [],
+    // R16 — rejections the engine observed during this turn. Populated
+    // from every patch_visualization tool call that returned an {error}
+    // instead of a {patch_update}. Surfaced in the runChatSession return
+    // so the host chatbox can categorize into user-facing copy buckets.
+    rejectedPatches: [],
   };
 
   let messages =
@@ -579,6 +600,9 @@ export async function runChatSession({
             : undefined,
           patches: state.pendingPatches.length > 0
             ? state.pendingPatches
+            : undefined,
+          rejectedPatches: state.rejectedPatches.length > 0
+            ? state.rejectedPatches
             : undefined,
           messages,
         };

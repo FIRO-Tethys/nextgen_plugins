@@ -34,6 +34,65 @@ const REQUIRED_MODEL_CAPABILITIES = ["tools"];
 
 const ADD_VISUALIZATION_EVENT = "tethysdash:add-visualization";
 
+// R16 — parse a patch_visualization error string into its allowed-prefixes
+// hint. The server formats errors as:
+//     `whitelist_rejected: op N path '/args/x' is not editable for viz
+//     source 'X'. ... one of the allowed prefixes for this source: [...]`
+// We extract the bracketed list to tell the "plugin not opted in" bucket
+// (empty []) from the "here's what IS editable" bucket (non-empty).
+export function _parseAllowedPrefixesFromError(errStr) {
+  if (typeof errStr !== "string") return null;
+  const match = errStr.match(/allowed prefixes for this source: (\[[^\]]*\])/);
+  if (!match) return null;
+  try {
+    return JSON.parse(match[1].replace(/'/g, '"'));
+  } catch {
+    return null;
+  }
+}
+
+// R16 — compose a user-facing warning from server-side rejection events.
+// Collapses every whitelist_rejected error into two buckets per the
+// simplified D1 scope. Returns the empty string when there's nothing to
+// surface (no rejections or only benign errors).
+export function _buildWhitelistWarning(rejectedPatches) {
+  if (!Array.isArray(rejectedPatches) || rejectedPatches.length === 0) return "";
+  const notEditableFromChat = []; // bucket 1
+  const pathsBySource = new Map(); // bucket 2 — source -> Set of paths
+  for (const entry of rejectedPatches) {
+    const err = entry?.error || "";
+    if (!err.includes("whitelist_rejected")) continue;
+    const allowed = _parseAllowedPrefixesFromError(err);
+    const source = entry?.args?.source || "this tile";
+    if (!allowed || allowed.length === 0) {
+      notEditableFromChat.push(source);
+    } else {
+      if (!pathsBySource.has(source)) pathsBySource.set(source, new Set());
+      for (const p of allowed) pathsBySource.get(source).add(p);
+    }
+  }
+  const parts = [];
+  if (notEditableFromChat.length > 0) {
+    const unique = Array.from(new Set(notEditableFromChat));
+    parts.push(
+      `⚠ That field isn't editable from chat. You may need to edit this ` +
+        `tile manually via the edit modal. (${unique.join(", ")})\n\n`,
+    );
+  }
+  if (pathsBySource.size > 0) {
+    const lines = [];
+    for (const [source, paths] of pathsBySource) {
+      const pathList = Array.from(paths).sort().join(", ");
+      lines.push(`  • ${source}: ${pathList}`);
+    }
+    parts.push(
+      `⚠ That field isn't editable from chat. Editable fields for the ` +
+        `targeted tile(s):\n${lines.join("\n")}\n\n`,
+    );
+  }
+  return parts.join("");
+}
+
 const Shell = styled.div`
   display: flex;
   flex-direction: column;
@@ -367,13 +426,27 @@ export default function Chatbox({
       // claim is a silent lie — the user sees layers added but the patch
       // dropped. Prepending a warning to the assistant content gives the
       // user a clear next-step: split into two turns.
-      const rejectionWarning = rejectedCollision.length > 0
+      const collisionWarning = rejectedCollision.length > 0
         ? `⚠ Some edits were skipped to avoid ambiguous layer ordering ` +
           `(cross_source_collision on UUID${rejectedCollision.length > 1 ? "s" : ""} ` +
           `${rejectedCollision.join(", ")}). ` +
           `Retry those edits in a separate message so the layer changes ` +
           `apply in a well-defined order.\n\n`
         : "";
+
+      // R16 — server-side rejections (whitelist_rejected, etc.) collected
+      // by the engine during this turn. Collapsed into two user-facing
+      // copy buckets per the plan's simplification from four categories:
+      //   1. Not editable from chat — no actionable editable path list
+      //      was available (resolution failure / plugin not opted in /
+      //      unknown source). User can't fix; pointer-back to manual edit.
+      //   2. Field not editable, here's what IS editable — a plugin was
+      //      resolved and has real editable paths; surface them so the LLM
+      //      and user can retry against a valid field.
+      // Resolution-failure routing: the server emits `allowed_prefixes=[]`
+      // in its error text (C1 telemetry). Non-empty list is the actionable
+      // bucket 2 signal.
+      const whitelistWarning = _buildWhitelistWarning(result.rejectedPatches);
 
       // Batch dispatch: ONE tethysdash:update-visualization event carrying
       // all remaining patches, scheduled via rAF alongside the layer-update
@@ -407,7 +480,7 @@ export default function Chatbox({
         ...prev,
         {
           role: "assistant",
-          content: rejectionWarning + content,
+          content: collisionWarning + whitelistWarning + content,
           thinking: accumulatedThinking || "",
           plotlyFigure: result.plotlyFigure ?? inlinePlotly,
           mapConfig: result.mapConfig ?? null,
