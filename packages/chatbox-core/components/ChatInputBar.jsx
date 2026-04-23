@@ -78,8 +78,8 @@ const ModelSelect = styled.select`
   background: transparent;
   cursor: pointer;
   outline: none;
-  min-width: 0;
-  flex: 1;
+  min-width: 180px;
+  flex: 1 1 auto;
   text-overflow: ellipsis;
 
   &:disabled {

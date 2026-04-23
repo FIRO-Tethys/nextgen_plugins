@@ -491,6 +491,11 @@ export default function Chatbox({
       setContentBuffer("");
     } catch (err) {
       setError(String(err?.message ?? err));
+      // Restore the user's text so the input and send button re-enable
+      // immediately — without this, the input stays empty after an error
+      // and the button looks stuck until the user retypes or switches
+      // provider (which coincidentally clears the error).
+      setInput(userText);
     } finally {
       abortRef.current = null;
       setToolStatus(null);
