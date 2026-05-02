@@ -1,0 +1,110 @@
+{
+  "name": "chatbox",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "lint": "eslint .",
+    "preview": "vite preview --port 5001 --strictPort",
+    "serve": "npm run build && npm run preview"
+  },
+  "dependencies": {
+    "@chatbox/core": "file:../../../../packages/chatbox-core",
+    "@modelcontextprotocol/sdk": "^1.27.1",
+    "maplibre-gl": "^5.20.0",
+    "plotly.js-basic-dist-min": "^3.4.0",
+    "pmtiles": "^4.4.0",
+    "react": "18.2.0",
+    "react-dom": "18.2.0",
+    "react-markdown": "^10.1.0",
+    "react-plotly.js": "^2.6.0",
+    "react-syntax-highlighter": "^16.1.1",
+    "remark-breaks": "^4.0.0",
+    "remark-gfm": "^4.0.1",
+    "styled-components": "^6.3.12"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.39.1",
+    "@originjs/vite-plugin-federation": "^1.4.1",
+    "@types/react": "^18.2.0",
+    "@types/react-dom": "^18.2.0",
+    "@vitejs/plugin-react": "^5.1.1",
+    "eslint": "^9.39.1",
+    "eslint-plugin-react-hooks": "^7.0.1",
+    "eslint-plugin-react-refresh": "^0.4.24",
+    "globals": "^16.5.0",
+    "vite": "^7.3.1"
+  },
+  "tethysdash": {
+    "clientPlugins": [
+      {
+        "source": "NRDS Map",
+        "label": "NRDS Hydrofabric Map",
+        "module": "./MapPanel",
+        "type": "client_custom_remote",
+        "scope": "mfe_nrds_chatbox",
+        "remoteType": "vite-esm",
+        "group": "NRDS",
+        "tags": ["map", "hydrofabric", "nrds", "pmtiles"],
+        "description": "MapLibre + PMTiles map for hydrofabric features",
+        "args": {
+          "data": {
+            "type": "object",
+            "description": "Map configuration object with highlight (pmtiles_url, layer_key, id_property, value) and camera (center, zoom) properties",
+            "required": true
+          }
+        }
+      },
+      {
+        "source": "NRDS Query",
+        "label": "NRDS Query Results",
+        "module": "./QueryPanel",
+        "type": "client_custom_remote",
+        "scope": "mfe_nrds_chatbox",
+        "remoteType": "vite-esm",
+        "group": "NRDS",
+        "tags": ["table", "query", "nrds", "data"],
+        "description": "Scrollable table for MCP query results",
+        "args": {
+          "data": {
+            "type": "array",
+            "description": "Array of row objects (e.g., [{col1: val1, col2: val2}]) or columnar object ({col1: [...], col2: [...]})",
+            "required": true
+          }
+        }
+      },
+      {
+        "source": "NRDS Markdown",
+        "label": "NRDS Markdown",
+        "module": "./MarkdownPanel",
+        "type": "client_custom_remote",
+        "scope": "mfe_nrds_chatbox",
+        "remoteType": "vite-esm",
+        "group": "NRDS",
+        "tags": ["markdown", "text", "nrds"],
+        "description": "Markdown + code syntax highlighting",
+        "args": {
+          "data": {
+            "type": "string",
+            "description": "Markdown-formatted text content or JSON string to display",
+            "required": true
+          }
+        }
+      },
+      {
+        "source": "NRDS Chart (Deprecated)",
+        "label": "NRDS Chart (Deprecated — use create_plotly_chart)",
+        "module": "./ChartPanel",
+        "type": "client_custom_remote",
+        "scope": "mfe_nrds_chatbox",
+        "remoteType": "vite-esm",
+        "group": "NRDS",
+        "tags": ["chart", "plotly", "nrds", "deprecated"],
+        "description": "DEPRECATED: Plotly chart via MFE. Use native create_plotly_chart instead.",
+        "args": {}
+      }
+    ]
+  }
+}
